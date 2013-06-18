@@ -22,6 +22,9 @@ object JobSim extends App {
   /** Calculate weighted mean value of a list of tuples (value, weight) */
   def wmean(xs:Iterable[(Double,Double)]): Double = (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), (v, w)) => (vs + v*w, ws + w) } ) match {case (vs,ws) => vs/ws}
 
+  /** Calculate the weighted mean and estimate the population standard deviation */
+  def wmeanstd( wvs: Iterable[(Double, Double)] ) = (wmean(wvs), std(wvs map {_._1}))
+  
   /* 
   •	Define k disciplines
   •	Generate n x k efficiency matrix: efficiency of each worker in each discipline
@@ -52,19 +55,28 @@ object JobSim extends App {
   				expExtraction0( remain-x, n-1, x::acc )
   	}
   } 
+
+  /** Generate a neverending, lazily-evaluated sequence of Jobs using the given generator */
+  def jobStream(gen: Int => Job): Stream[Job] = {
+    def jobStream(i: Int, gen: Int => Job): Stream[Job] = gen(i) #:: jobStream(i+1, gen)
+    
+    jobStream(0, gen)
+  }
   
   /**
    * Generate a number of singleton jobs (ie. no parent)
    * Each job is a mixture of skill areas, with the work in each exponentially distributed.
- * @param numJobs Number of jobs to generate
- * @param totalWork Total amount of work (person-years) that the jobs should (approximately) add up to
- * @param std The standard deviation of work in each job
- * @param numDisciplines The number of discipline or skill areas the jobs will be distributed over.
- * @return List of jobs
- */
-def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: Int ) = {
-    (1 to numJobs) map ( i => Job(i, None, expExtraction( normRand(totalWork/numJobs, std).abs, numDisciplines )) ) toList
-  }
+   * @param numJobs Number of jobs to generate
+   * @param totalWork Total amount of work (person-years) that the jobs should (approximately) add up to
+   * @param std The standard deviation of work in each job
+   * @param numDisciplines The number of discipline or skill areas the jobs will be distributed over.
+   * @return List of jobs
+   */
+  def orphanJob( avWork: Double, std: Double, numDisciplines: Int ): Int => Job = Job(_, None, expExtraction( normRand(avWork, std).abs, numDisciplines ))
+  
+  def orphanJobs( avWork: Double, std: Double, numDisciplines: Int ) = jobStream( orphanJob(avWork, std, numDisciplines ) )
+
+  def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: Int ) = jobStream( orphanJob(totalWork/numJobs, std, numDisciplines ) ) take(numJobs) toList 
   
   def printStats( matching: Map[Job, Worker] ) {
 	  println("1 to n matching= " + matching)
@@ -79,10 +91,10 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
 	  println("Average value: " + wmean( matching map { case (j, w) => (j.workload/j.workerTime(w), j.workerTime(w)) } ))
   }
 
-  def printStats1( matching: Map[Job, Bid] ) {
-	  val totalWork = matching.keySet map {_.workload} sum
-	  val timeWorked = matching.values map { _.timeload } sum
-	  val numWorkers = (matching.values map {_.worker} toSet).size
+  def printStats1( matching: List[Bid] ) {
+	  val totalWork = matching map {_.workload} sum
+	  val timeWorked = matching map { _.timeload } sum
+	  val numWorkers = (matching map {_.worker} toSet).size
 
       println("1 to n matching= " + matching)
 	  println("1 to n commitment= " + Market.timeCommitment(matching))
@@ -91,9 +103,9 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
 	  println("Amount of allocated work: " + totalWork + " = " + totalWork/numWorkers + " per worker")
 	  println("Amount of allocated time: " + timeWorked + " = " + timeWorked/numWorkers + " per worker" )
 
-	  println("Worker average value: " + (matching.values groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.workload/b.timeload, b.timeload) } )) } ))
-	  println("Job value: " + (matching.values map { b => b.workload/b.timeload }))
-	  println("Average value: " + wmean( matching.values map { b => (b.workload/b.timeload, b.timeload) } ))
+	  println("Worker average value: " + (matching groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.workload/b.timeload, b.timeload) } )) } ))
+	  println("Job value: " + (matching map { b => b.workload/b.timeload }))
+	  println("Average value: " + wmean( matching map { b => (b.workload/b.timeload, b.timeload) } ))
 
 	  println("Credit rates: " + Market.creditRate(matching))
 	  println("Production rate: " + Market.productionRate(matching))
@@ -117,14 +129,22 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
     // Determine worker commitment (and rates) from most recent set of allocations
     // Continue market bidding until max work reached
 	val margin = 2.0
-    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => normRand(1.0, 0.5) abs ) toList )) toList
+    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
     val workStep = 1.0/batchFreq
     val batchWork = numWorkers/batchFreq*margin
     val numJobs = batchWork/jobSize toInt
     val market = new Market(numDisciplines)
 
-    def marketSim( ws: List[Worker], js: List[Job], minWork: Double, 
-                   acc: List[(List[Worker], Map[Job, Bid])] ): List[(List[Worker], Map[Job, Bid])] = {
+    println("Workers:")
+    for (w <- workers) println( w.name + ": " + w.efficiency )
+  
+    // Create stream of jobs to consume
+    val alljobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
+
+    val (newJobs, nextJobs) = alljobs.splitAt(numJobs)
+    
+    def marketSim( ws: List[Worker], js: List[Job], moreJobs: Stream[Job], minWork: Double, 
+                   acc: List[(List[Worker], List[Bid])] ): List[(List[Worker], List[Bid])] = {
       println("Jobs: " + (js map {_.workload} sum))
       for (j <- js) println( j.id + ": " + j.skills )
 
@@ -133,23 +153,19 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
       val tmap = Market.timeCommitment(matching)
 	  val updatedWorkers = workers0 map { w => Worker(w.name, w.efficiency, w.rate, tmap.getOrElse(w, 0.0) + w.committed) }
 
-      val unfilledJobs = js.toSet &~ matching.keySet
+      val unfilledJobs = js.toSet &~ matching.map(_.job).toSet
       val newWork = numWorkers*workStep*margin - unfilledJobs.map(_.workload).sum
       val numJobs = newWork/jobSize toInt
-      val newJobs = orphanJobs(numJobs, newWork, jobSize/2.0, numDisciplines)
+      
+      val (newJobs, nextJobs) = moreJobs.splitAt(numJobs)
       
       if (minWork < simYears)
-        marketSim( updatedWorkers, unfilledJobs.toList:::newJobs, minWork + workStep, (updatedWorkers, matching)::acc )
+        marketSim( updatedWorkers, unfilledJobs.toList:::newJobs.toList, nextJobs, minWork + workStep, (updatedWorkers, matching)::acc )
       else
     	(updatedWorkers, matching)::acc
     }
     
-    println("Workers:")
-    for (w <- workers) println( w.name + ": " + w.efficiency )
-  
-    val jobs = orphanJobs(numJobs, batchWork, jobSize/2.0, numDisciplines)
-
-    marketSim( workers, jobs, workStep, Nil ).reverse
+    marketSim( workers, newJobs toList, nextJobs, workStep, Nil ).reverse
   }
   
   println("Full market matching:")
@@ -167,17 +183,18 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
 		  		       std(creditRates map (_._1)))
   
   // Number of bids per job, averaged over workers
-  val avBids = mean(fullMarketMatch.flatMap(m => (m.values map { _.worker } groupBy {w => w}) map { case (w, ws) => w.bids.length.toDouble/ws.size }))
+  val avBids = mean(fullMarketMatch.flatMap(m => (m map { _.worker } groupBy {w => w}) map { case (w, ws) => w.bids.length.toDouble/ws.size }))
   
-  val numBids = (fullMarketMatch flatMap {_.values flatMap { b: Bid => Set(b.worker) }}) map {w: Worker => w.bids.length} sum
-  val numJobs = fullMarketMatch map {_.size} sum
+  val numBids = (fullMarketMatch.flatten flatMap {_.worker.bids} toSet) size
+  val numJobs = fullMarketMatch.flatten size
   
+  println("Num bids: " + numBids + " Num jobs: " + numJobs)
   println("Av bids per worker per job: " + avBids)
   println("Av bids per job: " + numBids.toDouble/numJobs)
   println("Credit history: " + creditHistory)
   
-  val totalWork = fullMarketMatch flatMap (_.keySet) map {_.workload} sum
-  val timeWorked = fullMarketMatch flatMap ( _.values map { b: Bid => b.timeload } ) sum
+  val totalWork = fullMarketMatch.flatten map {_.workload} sum
+  val timeWorked = fullMarketMatch.flatten map {_.timeload} sum
   val workers = workerHistory.last
 
   // println("1 to n matching= " + matching)
