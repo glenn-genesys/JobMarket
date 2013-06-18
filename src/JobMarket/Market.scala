@@ -21,41 +21,60 @@ object Market {
    * Calculate the time commitment for each worker implied by the given matching
    * Return the result in a Map
    */
-  def timeCommitment( m:Map[Job, (Worker, Double)] ) = 
+  def timeCommitment( m:Map[Job, Bid] ) = 
+    m.values groupBy { _.worker } map { case (w, bids) => (w, bids map { _.timeload } sum ) }
+  /* def timeCommitment( m:Map[Job, (Worker, Double)] ) = 
     m groupBy { _._2._1 } map { case (ww, jws) => (ww, jws map { case (j, (w, _)) => j.workerTime(w) } sum ) }
+    */
 
   /** 
    * Calculate the average crediting rate for each worker implied by the given matching
    * Return the result in a Map
    */
-  def creditRate( m:Map[Job, (Worker, Double)] ) = 
+  def creditRate( m:Map[Job, Bid] ) = 
+    m.values groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.price/b.timeload, b.timeload) } )) }
+  /* def creditRate( m:Map[Job, (Worker, Double)] ) = 
     m groupBy { _._2._1 } map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, p)) => (p/j.workerTime(w), j.workerTime(w)) } )) }
+    */
 
  /** 
    * Calculate the average production rate over all jobs (ie. work/credit) implied by the given matching
    */
-  def productionRate( m:Map[Job, (Worker, Double)] ) = 
-  { wvs: Map[Double, Double] => (wmean(wvs), std(wvs map {_._1})) }.apply( m map { case (j, (w, p)) => (j.workload/p, j.workload) } )
+  def productionRate( m:Map[Job, Bid] ) = 
+  { wvs: Iterable[(Double, Double)] => (wmean(wvs), std(wvs map {_._1})) }.apply( m.values map { case b: Bid => (b.workload/b.price, b.workload) } )
+  /* def productionRate( m:Map[Job, (Worker, Double)] ) = 
+  { wvs: Map[Double, Double] => (wmean(wvs), std(wvs map {_._1})) }.apply( m map { case (j, (w, p)) => (j.workload/p, j.workload) } ) */
    //  wmean(m map { case (j, (w, p)) => (j.workload/p, j.workload) })
+
+ /** 
+   * Calculate the average payoff-ratio over all jobs (ie. productionRate/creditRate) implied by the given matching
+   */
+  def payoffRatio( m:Map[Job, Bid] ) = 
+  { wvs: Iterable[(Double, Double)] => (wmean(wvs), std(wvs map {_._1})) }.apply( m.values map { case b: Bid => (b.workload*b.timeload/math.pow(b.price, 2), b.workload) } )
+  // { wvs: Map[Double, Double] => (wmean(wvs), std(wvs map {_._1})) }.apply( m map { case (j, (w, p)) => (j.workload*j.workerTime(w)/math.pow(p, 2), j.workload) } )
 
 
   /**
    * Generate bids of workers for the given jobs, using the supplied bid function: (Worker (Job Value)) => (Worker (Job Price))
    * But new bids must be different from all previous bids. In particular, bids for the same job should be *better* (ie. lower)
- * @param ws A list of workers to make new bids
- * @param js A list of jobs to bid for
- * @param current Current offers (workers don't rebid jobs they currently have an unrejected offer for)
- * @param bidfun A function that a worker uses to determine a bid price
- * @return A list of bids (one per worker)
- */
-def workerBids( ws: List[Worker], js: List[Job], current: Map[Job, (Worker, Double)] ) = {
-  // For each worker, sort jobs in order of decreasing surplus value / time
-  // Surplus value is bid - rate*time, where bid is halfway between value and rate *or* 5% less than last bid
-  // Therefore, just need job with highest (new) bid / time
-  val allBids = ws.map( w => (w, js filter { !current.get(_).exists { _._1 == w } } map { j =>
-    (j, (w.bids.collectFirst { case (`j`, b) => b*0.95 }).getOrElse((j.workload + j.workerTime(w)*w.rate)/2.0) ) } ) )
+   * @param ws A list of workers to make new bids
+   * @param js A list of jobs to bid for
+   * @param current Current offers (workers don't rebid jobs they currently have an unrejected offer for)
+   * @param bidfun A function that a worker uses to determine a bid price
+   * @return A list of bids (one per worker)
+   */
+  def workerBids( ws: List[Worker], js: List[Job], current: Map[Job, Bid] ) = {
+	  // For each worker, sort jobs in order of decreasing surplus value / time
+	  // Surplus value is bid - rate*time, where bid is halfway between value and rate *or* 5% less than last bid
+	  // Therefore, just need job with highest (new) bid / time
   
-  allBids map { case (w, jbs) => (w, jbs maxBy { case (j, b) => b/j.workerTime(w) } ) }
+      // Workers do not rebid for which jobs they still have a current offer, so for each worker, exclude those they have bids for
+	  // val allBids = ws.map( w => (w, js.filterNot { current.get(_).forall { _.worker equals w } } map { j =>
+	  // 	Bid(w, j, (w.bids.collectFirst { case b: Bid => b.price*0.95 }).getOrElse((j.workload + j.workerTime(w)*w.rate)/2.0) ) } ) )
+  
+	  val allBids = ws.map( w => (w, js filter { !current.get(_).exists { _.worker equals w } } map { j =>
+	  	Bid(w, j, (w.bids.collectFirst { case b: Bid => b.price*0.95 }).getOrElse((j.workload + j.workerTime(w)*w.rate)/2.0) ) } ) )
+	  allBids map { case (w, bs) => bs maxBy { case Bid(w, j, p) => p/j.workerTime(w) } }
   }
   
   /**
@@ -63,17 +82,23 @@ def workerBids( ws: List[Worker], js: List[Job], current: Map[Job, (Worker, Doub
    * @param workerBids List of workers paired with their bids (worker (job, bid))
    * @param bids New list of bids for jobs (with price), by worker
    * @param current Current map of best (Worker) proposals made to each Job, and their price
-   * @param workerPref Is a function (Job, (Worker, Price)) => Double that is highest for the bid most preferred by Job
+   * @param workerPref Is a function Bid => Double that is highest for the bid most preferred by Job
    * i.e. It is the function that determines how jobs choose between bids based on price
    * @return Updated current best map of jobs to unrejected bids
    */
-  def considerOffers( workerBids: List[(Worker, (Job, Double))], 
+  def considerOffers( workerBids: List[Bid], 
+		  			  workerPref: Bid => Double, 
+		  			  current: Map[Job, Bid] ): Map[Job, Bid] = {
+	  // Must force each job to choose their best offer
+      (current.toList ::: (workerBids map { b => (b.job, b) })).sortBy { case (_, b) => workerPref(b) } toMap
+  }
+  
+  /* def considerOffers( workerBids: List[(Worker, (Job, Double))], 
 		  			  workerPref: ((Job, (Worker, Double))) => Double, 
 		  			  current: Map[Job, (Worker, Double)] ): Map[Job, (Worker, Double)] = {
       // Reformat bids, concat to current offers and choose best worker for each job
       (current.toList ::: (workerBids map { case (w, (j, p)) => (j, (w, p)) })).sortBy(workerPref)_ toMap
-  }
-  
+  } */
   /* def considerOffers( workerBids: List[(Worker, (Job, Double))], 
 		  			  workMax: Double, 
 		  			  workerPref: ((Job, (Worker, Double))) => Double, 
@@ -207,12 +232,12 @@ class Market( disciplines: Int ) {
 	  def marketBidding( ws: List[Worker], 
 	                     bidders: List[Worker], 
 	                     js: List[Job], 
-	                     offers: Map[Job, (Worker, Double)] ): (Map[Job, (Worker, Double)], List[Worker]) = {
+	                     offers: Map[Job, Bid] ): (Map[Job, Bid], List[Worker]) = {
 	      // Get bids of given workers for given jobs
 		  val bids = Market.workerBids(bidders, js, offers)
 	
 	      // Update current best offers
-		  val current = Market.considerOffers( bids, { case (j, (w, p)) => 1.0/p }, offers )  
+		  val current = Market.considerOffers( bids, { b: Bid => 1.0/b.price }, offers )  
 		  
 		  // Bidding stops when no new bids are accepted in a round
 		  // if (current equals offers) return (current, ws)
@@ -226,23 +251,24 @@ class Market( disciplines: Int ) {
 		  // Committed is only updated once bids are finalised (at the end of this job cycle)
 		  // If a worker is not found in cmap, then all of their bids have been rejected -- revert to original rate
 		  val updatedWorkers = ws map { w => Worker(w.name, w.efficiency, cmap.getOrElse(w, inws.find(_ equals w).getOrElse(w).rate), w.committed,
-		    										(bids collect { case (`w`, (j, b)) => (j, b) }):::w.bids ) }
+		    										(bids collect { case b: Bid if b.worker equals w => b }):::w.bids ) }
 		  
 		  // Partition into those workers that need to rebid, and those that can sit
 		  val (sitters, rebidders) = updatedWorkers partition { w => tmap.getOrElse(w, 0.0) + w.committed > minWork}
 	
 		  // Replace workers in current map with updated workers (since all are immutable)
-		  val updatedCurrent = current map { case (j, (w, b)) => (j, (updatedWorkers.find(_ equals w).getOrElse(w), b)) }
+		  // val updatedCurrent = current map { case (j, (w, b)) => (j, (updatedWorkers.find(_ equals w).getOrElse(w), b)) }
+		  val updatedCurrent = current.values map { case Bid(w, j, p) => (j, Bid(updatedWorkers.find(_ equals w).getOrElse(w), j, p)) } toMap
 		  
 		  // Bidding stop when all workers have reached minimum work commitment, or all jobs committed
 		  rebidders match {
 		    case Nil => (updatedCurrent, updatedWorkers)
 		    case _ if (current.size equals js.size) && (current equals offers) => (updatedCurrent, updatedWorkers)
-		    case _ => marketBidding( updatedWorkers, rebidders, js, current )
+		    case _ => marketBidding( updatedWorkers, rebidders, js, updatedCurrent )
 		  }
 	  }	  
 	  
-	  marketBidding( inws, inws, js, Map.empty[Job, (Worker, Double)])
+	  marketBidding( inws, inws, js, Map.empty[Job, Bid])
   }
   
   

@@ -8,7 +8,7 @@ package JobMarket
  * @param efficiency An ordered list. The rate of production of this worker for each corresponding skill/discipline area
  * @param rate Typical crediting rate
  */
-case class Worker(name: String, efficiency: List[Double], rate: Double = 1.0, committed: Double = 0.0, bids: List[(Job, Double)] = Nil) {
+case class Worker(name: String, efficiency: List[Double], rate: Double = 1.0, committed: Double = 0.0, bids: List[Bid] = Nil) {
   
   /**
    * Return the list of jobs, in preferred order (most preferred first)

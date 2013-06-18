@@ -79,10 +79,10 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
 	  println("Average value: " + wmean( matching map { case (j, w) => (j.workload/j.workerTime(w), j.workerTime(w)) } ))
   }
 
-  def printStats1( matching: Map[Job, (Worker, Double)] ) {
+  def printStats1( matching: Map[Job, Bid] ) {
 	  val totalWork = matching.keySet map {_.workload} sum
-	  val timeWorked = matching map { case (j, (w, _)) => j.workerTime(w) } sum
-	  val numWorkers = (matching map {case (_, (w, _)) => w} toSet).size
+	  val timeWorked = matching.values map { _.timeload } sum
+	  val numWorkers = (matching.values map {_.worker} toSet).size
 
       println("1 to n matching= " + matching)
 	  println("1 to n commitment= " + Market.timeCommitment(matching))
@@ -91,10 +91,10 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
 	  println("Amount of allocated work: " + totalWork + " = " + totalWork/numWorkers + " per worker")
 	  println("Amount of allocated time: " + timeWorked + " = " + timeWorked/numWorkers + " per worker" )
 
-	  println("Worker average value: " + (matching groupBy {case (_, (w, _)) => w} map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, _)) => (j.workload/j.workerTime(w), j.workerTime(w)) } )) } ))
-	  println("Job value: " + (matching map { case (j, (w, _)) => j.workload/j.workerTime(w) }))
-	  println("Average value: " + wmean( matching map { case (j, (w, _)) => (j.workload/j.workerTime(w), j.workerTime(w)) } ))
-	  
+	  println("Worker average value: " + (matching.values groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.workload/b.timeload, b.timeload) } )) } ))
+	  println("Job value: " + (matching.values map { b => b.workload/b.timeload }))
+	  println("Average value: " + wmean( matching.values map { b => (b.workload/b.timeload, b.timeload) } ))
+
 	  println("Credit rates: " + Market.creditRate(matching))
 	  println("Production rate: " + Market.productionRate(matching))
   }
@@ -124,7 +124,7 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
     val market = new Market(numDisciplines)
 
     def marketSim( ws: List[Worker], js: List[Job], minWork: Double, 
-                   acc: List[(List[Worker], Map[Job, (Worker, Double)])] ): List[(List[Worker], Map[Job, (Worker, Double)])] = {
+                   acc: List[(List[Worker], Map[Job, Bid])] ): List[(List[Worker], Map[Job, Bid])] = {
       println("Jobs: " + (js map {_.workload} sum))
       for (j <- js) println( j.id + ": " + j.skills )
 
@@ -167,9 +167,9 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
 		  		       std(creditRates map (_._1)))
   
   // Number of bids per job, averaged over workers
-  val avBids = mean(fullMarketMatch.flatMap(m => (m map { case (j, (w,b)) => w } groupBy {w => w}) map { case (w, ws) => w.bids.length.toDouble/ws.size }))
+  val avBids = mean(fullMarketMatch.flatMap(m => (m.values map { _.worker } groupBy {w => w}) map { case (w, ws) => w.bids.length.toDouble/ws.size }))
   
-  val numBids = (fullMarketMatch flatMap {m: Map[Job, (Worker, Double)] => m flatMap { case (j, (w, b)) => Set(w) }}) map {w: Worker => w.bids.length} sum
+  val numBids = (fullMarketMatch flatMap {_.values flatMap { b: Bid => Set(b.worker) }}) map {w: Worker => w.bids.length} sum
   val numJobs = fullMarketMatch map {_.size} sum
   
   println("Av bids per worker per job: " + avBids)
@@ -177,7 +177,7 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
   println("Credit history: " + creditHistory)
   
   val totalWork = fullMarketMatch flatMap (_.keySet) map {_.workload} sum
-  val timeWorked = fullMarketMatch flatMap ( m => m map { case (j, (w, _)) => j.workerTime(w) } ) sum
+  val timeWorked = fullMarketMatch flatMap ( _.values map { b: Bid => b.timeload } ) sum
   val workers = workerHistory.last
 
   // println("1 to n matching= " + matching)
@@ -195,8 +195,9 @@ def orphanJobs( numJobs: Int, totalWork: Double, std: Double, numDisciplines: In
   def stdError( ve: (Double, Double) ) = ve._1.toString + " +/- " + ve._2
   
   println("Credit rates: " + creditRates + Market.creditRate(fullMarketMatch reduceLeft { _ ++ _ }))
-  println("Average credite rate: " + stdError(avCreditRate))
+  println("Average credite rate: " + stdError(avCreditRate)) 
   println("Production rate: " + stdError(Market.productionRate(fullMarketMatch reduceLeft { _ ++ _ })) )
+  println("Pay-off ratio (Job/Worker): " + stdError(Market.payoffRatio(fullMarketMatch reduceLeft { _ ++ _ })) )
   
   /* val numDisciplines = 5
   
