@@ -139,9 +139,9 @@ object JobSim extends App {
     for (w <- workers) println( w.name + ": " + w.efficiency )
   
     // Create stream of jobs to consume
-    val alljobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
+    val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
 
-    val (newJobs, nextJobs) = alljobs.splitAt(numJobs)
+    val (newJobs, nextJobs) = allJobs.splitAt(numJobs)
     
     def marketSim( ws: List[Worker], js: List[Job], moreJobs: Stream[Job], minWork: Double, 
                    acc: List[(List[Worker], List[Bid])] ): List[(List[Worker], List[Bid])] = {
@@ -150,8 +150,9 @@ object JobSim extends App {
 
       val (matching, workers0) = market.marketBidding(ws, js, minWork)
 	    
+      // Update workers with current commitment, to a minimum of minWork, since that time has passed
       val tmap = Market.timeCommitment(matching)
-	  val updatedWorkers = workers0 map { w => Worker(w.name, w.efficiency, w.rate, tmap.getOrElse(w, 0.0) + w.committed) }
+	  val updatedWorkers = workers0 map { w => Worker(w.name, w.efficiency, w.rate, math.max(tmap.getOrElse(w, 0.0) + w.committed, minWork)) }
 
       val unfilledJobs = js.toSet &~ matching.map(_.job).toSet
       val newWork = numWorkers*workStep*margin - unfilledJobs.map(_.workload).sum
@@ -191,14 +192,14 @@ object JobSim extends App {
   println("Num bids: " + numBids + " Num jobs: " + numJobs)
   println("Av bids per worker per job: " + avBids)
   println("Av bids per job: " + numBids.toDouble/numJobs)
-  println("Credit history: " + creditHistory)
+  // println("Credit history: " + creditHistory)
   
   val totalWork = fullMarketMatch.flatten map {_.workload} sum
   val timeWorked = fullMarketMatch.flatten map {_.timeload} sum
   val workers = workerHistory.last
 
   // println("1 to n matching= " + matching)
-  println("Worker commitment= " + workers.map (_.committed) )
+  // println("Worker commitment= " + workers.map (_.committed) )
 
   println("Workers: " + workers)
   println("Amount of allocated work: " + totalWork + " = " + totalWork/workers.size + " per worker")
@@ -211,7 +212,7 @@ object JobSim extends App {
 
   def stdError( ve: (Double, Double) ) = ve._1.toString + " +/- " + ve._2
   
-  println("Credit rates: " + creditRates + Market.creditRate(fullMarketMatch reduceLeft { _ ++ _ }))
+  // println("Credit rates: " + creditRates + Market.creditRate(fullMarketMatch reduceLeft { _ ++ _ }))
   println("Average credite rate: " + stdError(avCreditRate)) 
   println("Production rate: " + stdError(Market.productionRate(fullMarketMatch reduceLeft { _ ++ _ })) )
   println("Pay-off ratio (Job/Worker): " + stdError(Market.payoffRatio(fullMarketMatch reduceLeft { _ ++ _ })) )

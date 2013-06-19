@@ -55,7 +55,7 @@ object Market {
 
 
   /**
-   * Generate bids of workers for the given jobs, using the supplied bid function: (Worker (Job Value)) => (Worker (Job Price))
+   * Generate bids of workers for the given jobs, using the supplied bid function: (Worker Job) => Bid
    * But new bids must be different from all previous bids. In particular, bids for the same job should be *better* (ie. lower)
    * @param ws A list of workers to make new bids
    * @param js A list of jobs to bid for
@@ -63,7 +63,7 @@ object Market {
    * @param bidfun A function that a worker uses to determine a bid price
    * @return A list of bids (one per worker)
    */
-  def workerBids( ws: List[Worker], js: List[Job], current: List[Bid] ) = {
+  def workerBids( ws: List[Worker], js: List[Job], current: List[Bid], bidfun: (Worker, Job) => Option[Bid] ) = {
 	  // For each worker, determine all possible next bids
 	  // Next bid is halfway between job value and latest rate *or* 5% less than last bid
 	  // Choose Bid with highest credit rate for each worker
@@ -71,10 +71,11 @@ object Market {
 	  val jobMap = current map {b => (b.job, b)} toMap
     
       // Workers do not rebid jobs for which they still have a current offer, so for each worker, exclude those they have bids for
-	  val allBids = ws.map( w => js filter { !jobMap.get(_).exists { _.worker equals w } } map { j =>
-	  	Bid(w, j, (w.bids.collectFirst { case Bid(_,`j`,p) => p*0.95 }).getOrElse((j.workload + j.workerTime(w)*w.rate)/2.0) ) } )
-	  
-	  allBids map { _ maxBy { _.creditRate } }
+	  val allBids = ws.map( w => js filter { !jobMap.get(_).exists { _.worker equals w } } map { j => bidfun(w, j) } )
+
+	  // Return for each worker the bid that maximises their credit rate (price/time)
+	  // allBids map { _ maxBy { _.creditRate } }   // Replaced because allBids now contains options
+	  allBids map { _ maxBy { _.map(_.creditRate).getOrElse(0.0) } } flatten
   }
   
   /**
@@ -204,11 +205,23 @@ class Market( disciplines: Int ) {
 	                     bidders: List[Worker], 
 	                     js: List[Job], 
 	                     offers: List[Bid] ): (List[Bid], List[Worker]) = {
+
+	      val priceBid: (Worker, Job) => Option[Bid] = 
+	        (w, j) => Some(Bid(w, j, (w.bids.collectFirst { case Bid(_,`j`,p) => p*0.95 }).getOrElse((j.workload + j.workerTime(w)*w.rate)/2.0) ))
+	  
+	      val preferenceBid: (Worker, Job) => Option[Bid] = {
+	        case (w, j) if w.bids.exists( _.job equals j) => None
+	        // case (w, j) => Some(Bid(w, j, j.workload))
+	        // Worker's next preference is that which has the highest value (work/time), 
+	        // but average work and time makes worker prefs and job prefs correct
+	        case (w, j) => Some(Bid(w, j, (j.workload + j.workerTime(w))/2.0))
+	      }
+	  
 	      // Get bids of given workers for given jobs
-		  val bids = Market.workerBids(bidders, js, offers)
+		  val bids = Market.workerBids(bidders, js, offers, priceBid)
 	
-	      // Update current best offers
-		  val current = Market.considerOffers( bids, { b: Bid => 1.0/b.price }, offers )  
+	      // Update current best offers -- lowest price = highest production rate
+		  val current = Market.considerOffers( bids, { b: Bid => b.productionRate }, offers )  
 		  
 		  val tmap = Market.timeCommitment(current)
 		  
