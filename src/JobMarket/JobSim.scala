@@ -141,14 +141,12 @@ object JobSim extends App {
     // Create stream of jobs to consume
     val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
 
-    val (newJobs, nextJobs) = allJobs.splitAt(numJobs)
-    
-    def marketSim( ws: List[Worker], js: List[Job], moreJobs: Stream[Job], minWork: Double, 
+    def marketSim( ws: List[Worker], js: List[Job], moreJobs: Stream[Job], minWork: Double, mType: MarketType,
                    acc: List[(List[Worker], List[Bid])] ): List[(List[Worker], List[Bid])] = {
       println("Jobs: " + (js map {_.workload} sum))
       for (j <- js) println( j.id + ": " + j.skills )
 
-      val (matching, workers0) = market.marketBidding(ws, js, minWork)
+      val (matching, workers0) = market.marketBidding(ws, js, minWork, mType)
 	    
       // Update workers with current commitment, to a minimum of minWork, since that time has passed
       val tmap = Market.timeCommitment(matching)
@@ -161,12 +159,14 @@ object JobSim extends App {
       val (newJobs, nextJobs) = moreJobs.splitAt(numJobs)
       
       if (minWork < simYears)
-        marketSim( updatedWorkers, unfilledJobs.toList:::newJobs.toList, nextJobs, minWork + workStep, (updatedWorkers, matching)::acc )
+        marketSim( updatedWorkers, unfilledJobs.toList:::newJobs.toList, nextJobs, minWork + workStep, mType, (updatedWorkers, matching)::acc )
       else
     	(updatedWorkers, matching)::acc
     }
     
-    marketSim( workers, newJobs toList, nextJobs, workStep, Nil ).reverse
+    val (newJobs, nextJobs) = allJobs.splitAt(numJobs)
+    
+    marketSim( workers, newJobs toList, nextJobs, workStep, CreditMarket, Nil ).reverse
   }
   
   println("Full market matching:")

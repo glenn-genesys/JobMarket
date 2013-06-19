@@ -196,32 +196,21 @@ class Market( disciplines: Int ) {
    * Simulate a market bidding process where workers bid for jobs
    * @param ws List of Workers
    * @param js List of Jobs
-   * @param minWork Minimum workload each worker must try to commit to
+   * @param minWork Minimum workload each worker must try to commit to 
    * @return Map matching Jobs to Workers, and updated list of workers
    */
-  def marketBidding( inws: List[Worker], js: List[Job], minWork: Double ) = {
-    
+  def marketBidding( inws: List[Worker], js: List[Job], minWork: Double, mType: MarketType ) = {
+
 	  def marketBidding( ws: List[Worker], 
 	                     bidders: List[Worker], 
 	                     js: List[Job], 
 	                     offers: List[Bid] ): (List[Bid], List[Worker]) = {
 
-	      val priceBid: (Worker, Job) => Option[Bid] = 
-	        (w, j) => Some(Bid(w, j, (w.bids.collectFirst { case Bid(_,`j`,p) => p*0.95 }).getOrElse((j.workload + j.workerTime(w)*w.rate)/2.0) ))
-	  
-	      val preferenceBid: (Worker, Job) => Option[Bid] = {
-	        case (w, j) if w.bids.exists( _.job equals j) => None
-	        // case (w, j) => Some(Bid(w, j, j.workload))
-	        // Worker's next preference is that which has the highest value (work/time), 
-	        // but average work and time makes worker prefs and job prefs correct
-	        case (w, j) => Some(Bid(w, j, (j.workload + j.workerTime(w))/2.0))
-	      }
-	  
 	      // Get bids of given workers for given jobs
-		  val bids = Market.workerBids(bidders, js, offers, priceBid)
+		  val bids = Market.workerBids(bidders, js, offers, mType.bidfun)
 	
 	      // Update current best offers -- lowest price = highest production rate
-		  val current = Market.considerOffers( bids, { b: Bid => b.productionRate }, offers )  
+		  val current = Market.considerOffers( bids, mType.selectfun, offers )  
 		  
 		  val tmap = Market.timeCommitment(current)
 		  
