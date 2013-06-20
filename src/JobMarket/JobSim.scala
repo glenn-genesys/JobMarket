@@ -13,17 +13,28 @@ import scala.collection.immutable.Map
 object JobSim extends App {
   
   def funPrint[T]( x: T ) = { println(x); x }   
-  def mean[T](xs:Iterable[T])( implicit num: Numeric[T] ) = num.toDouble(xs.sum) / xs.size
-  def std[T](xs:Iterable[T])( implicit num: Numeric[T] ) = 	{
-    val av = mean(xs)
-	math.sqrt((mean(xs map {v => List(v, v).product}) - av*av)*xs.size/(xs.size - 1))
-  }                                               
+  def mean[T](xs:Iterable[T])( implicit num: Numeric[T] ) = xs.size match {
+    case 0 => None
+    case _ => Some(num.toDouble(xs.sum) / xs.size)
+  }
+  def std[T](xs:Iterable[T])( implicit num: Numeric[T] ) = xs.size match {
+    case n if n>1 => {
+    	val av = mean(xs).get
+    	Some(math.sqrt((mean(xs map {v => List(v, v).product}).get - av*av)*xs.size/(xs.size - 1)))
+    }
+    case _ => None
+  }                                
   
   /** Calculate weighted mean value of a list of tuples (value, weight) */
   def wmean(xs:Iterable[(Double,Double)]): Double = (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), (v, w)) => (vs + v*w, ws + w) } ) match {case (vs,ws) => vs/ws}
+  def wmean(xs:Iterable[(Double,Option[Double])]): Double = 
+    (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), (v, w)) => (vs + v*w.getOrElse(0.0), ws + w.getOrElse(0.0)) } ) match {case (vs,ws) => vs/ws}
 
-  /** Calculate the weighted mean and estimate the population standard deviation */
+  /** Calculate the weighted mean and estimate the population standard deviation from a list of tuples (value, weight)
+   *  Note that weights can be estimated from std using: w = 1/std^2
+   */
   def wmeanstd( wvs: Iterable[(Double, Double)] ) = (wmean(wvs), std(wvs map {_._1}))
+  def wmeanstdo( wvs: Iterable[(Double, Option[Double])] ) = (wmean(wvs), std(wvs map {_._1}))
   
   /* 
   •	Define k disciplines
@@ -128,7 +139,7 @@ object JobSim extends App {
   	// Generate additional jobs to slightly exceed requirement again
     // Determine worker commitment (and rates) from most recent set of allocations
     // Continue market bidding until max work reached
-	val margin = 2.0
+	val margin = 1.5
     val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
     val workStep = 1.0/batchFreq
     val batchWork = numWorkers/batchFreq*margin
@@ -141,7 +152,7 @@ object JobSim extends App {
     // Create stream of jobs to consume
     val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
 
-    def marketSim( ws: List[Worker], js: List[Job], moreJobs: Stream[Job], minWork: Double, mType: MarketType,
+    def marketSim( ws: List[Worker], js: Iterable[Job], moreJobs: Stream[Job], minWork: Double, mType: MarketType,
                    acc: List[(List[Worker], List[Bid])] ): List[(List[Worker], List[Bid])] = {
       println("Jobs: " + (js map {_.workload} sum))
       for (j <- js) println( j.id + ": " + j.skills )
@@ -166,7 +177,7 @@ object JobSim extends App {
     
     val (newJobs, nextJobs) = allJobs.splitAt(numJobs)
     
-    marketSim( workers, newJobs toList, nextJobs, workStep, CreditMarket, Nil ).reverse
+    marketSim( workers, newJobs, nextJobs, workStep, CreditMarket, Nil ).reverse
   }
   
   println("Full market matching:")
@@ -175,24 +186,39 @@ object JobSim extends App {
   for (batch <- fullMarketMatch) printStats1(batch)
   println
 
+  def std2weight: Option[Double] => Double = so => (so.flatMap {s => Some(1.0/math.pow(s,2))}).getOrElse(0.0)
+  
+  val results = collection.mutable.Map.empty[String, Any]
+  
   // Determine various stats such as: worker rates over time, value over time, number of bids per job allocated
   val creditMap = fullMarketMatch map { Market.creditRate(_) }
-  // Time series of credit rates for each worker
-  val creditHistory = (creditMap flatten).groupBy { _._1 } map { case (w, vs) => (w, vs map (_._2)) }
-  val creditRates = creditHistory.values map { rs => (mean(rs), std(rs)) }
+  
+  // Time series of credit rates for each worker 
+  val creditHistory: Map[Worker, List[(Double,Double)]] = (creditMap flatten).groupBy { case (w, _) => w } map {
+    case (w, wvs) => (w, (wvs map { case (_, (v, st)) => (v, std2weight(st)) } ))
+  }
+  /* 	    case (w, wvs) => (w, (wvs map { case (w, (v, Some(std))) => (v, 1/math.pow(std, 2))
+		    								case (w, (v, None)) => (v, 0.0)}) )
+		  } */
+  val creditRates: Iterable[(Double, Option[Double])] = creditHistory.values map { wmeanstd(_) }
   val avCreditRate = ( wmean(creditRates map { case (r, stdr) => (r, 1.0/math.pow(stdr,2)) }),
 		  		       std(creditRates map (_._1)))
+  val avCreditRate0 = wmeanstd(creditRates map { case (r, stdr) => (r, 1.0/math.pow(stdr,2)) })
+  
+  results ++= Map("creditMap" -> creditMap, "Credit History" -> creditHistory, "Credit Rates" -> creditRates)
   
   // Number of bids per job, averaged over workers
   val avBids = mean(fullMarketMatch.flatMap(m => (m map { _.worker } groupBy {w => w}) map { case (w, ws) => w.bids.length.toDouble/ws.size }))
   
   val numBids = (fullMarketMatch.flatten flatMap {_.worker.bids} toSet) size
-  val numJobs = fullMarketMatch.flatten size
+  val numJobs = fullMarketMatch.flatten.size
   
   println("Num bids: " + numBids + " Num jobs: " + numJobs)
   println("Av bids per worker per job: " + avBids)
   println("Av bids per job: " + numBids.toDouble/numJobs)
   // println("Credit history: " + creditHistory)
+  results ++= Map("Num bids" -> numBids, "Num jobs" -> numJobs, "Av bids per worker per job" -> avBids, 
+      "Av bids per job" -> numBids.toDouble/numJobs)
   
   val totalWork = fullMarketMatch.flatten map {_.workload} sum
   val timeWorked = fullMarketMatch.flatten map {_.timeload} sum
@@ -205,17 +231,32 @@ object JobSim extends App {
   println("Amount of allocated work: " + totalWork + " = " + totalWork/workers.size + " per worker")
   println("Amount of allocated time: " + timeWorked + " = " + timeWorked/workers.size + " per worker" )
   println("Overall value: " + totalWork/timeWorked)
-
+  results ++= Map("Total work allocated" -> totalWork, "Work allocated per worker" -> totalWork/workers.size,
+      "Total time allocated" -> timeWorked, "Time allocated per worker" -> timeWorked/workers.size,
+      "Overall value" -> totalWork/timeWorked)
+  
   // println("Worker average value: " + (matching groupBy {case (_, (w, _)) => w} map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, _)) => (j.workload/j.workerTime(w), j.workerTime(w)) } )) } ))
   // println("Job value: " + (matching map { case (j, (w, _)) => j.workload/j.workerTime(w) }))
   // println("Average value: " + wmean( matching map { case (j, (w, _)) => (j.workload/j.workerTime(w), j.workerTime(w)) } ))
 
   def stdError( ve: (Double, Double) ) = ve._1.toString + " +/- " + ve._2
   
-  // println("Credit rates: " + creditRates + Market.creditRate(fullMarketMatch reduceLeft { _ ++ _ }))
-  println("Average credite rate: " + stdError(avCreditRate)) 
-  println("Production rate: " + stdError(Market.productionRate(fullMarketMatch reduceLeft { _ ++ _ })) )
-  println("Pay-off ratio (Job/Worker): " + stdError(Market.payoffRatio(fullMarketMatch reduceLeft { _ ++ _ })) )
+  println("Credit map: " + creditMap)
+  println("Credit rates: " + creditRates + Market.creditRate(fullMarketMatch flatten))
+  println("Average credit rate: " + stdError(avCreditRate) + " ; " + stdError(avCreditRate0) )
+  println("Production rate: " + stdError(Market.productionRate(fullMarketMatch flatten)) )
+  println("Pay-off ratio (Job/Worker): " + stdError(Market.payoffRatio(fullMarketMatch flatten)) )
+  results ++= Map("Av credit rate" -> stdError(avCreditRate), 
+      "Production rate" -> stdError(Market.productionRate(fullMarketMatch flatten)),
+      "Pay-off ratio (Job/Worker)" -> stdError(Market.payoffRatio(fullMarketMatch flatten)) )
+  
+  val timeCommitted = workers map {_.committed} sum
+  
+  println("Time % unemployed: " + (timeCommitted - timeWorked)/timeWorked + " = " + (timeCommitted - timeWorked)/workers.size + " per worker" )
+  results ++= Map("Time % unemployed" -> (timeCommitted - timeWorked)/timeWorked, "Time unemployed per worker" -> (timeCommitted - timeWorked)/workers.size)
+  
+  // val v = creditHistory map { case (w, rs) => { val maxeff = w.efficiency.max; (mean(rs)/maxeff, std(rs)/maxeff) } }
+  
   
   /* val numDisciplines = 5
   

@@ -32,7 +32,7 @@ object Market {
    * Return the result in a Map
    */
   def creditRate( m:List[Bid] ) = 
-    m groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.creditRate, b.timeload) } )) }
+	m groupBy { _.worker } map { case (ww, bids) => (ww, wmeanstd( bids map { b => (b.creditRate, b.timeload) } )) }
   /* def creditRate( m:Map[Job, (Worker, Double)] ) = 
     m groupBy { _._2._1 } map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, p)) => (p/j.workerTime(w), j.workerTime(w)) } )) }
     */
@@ -63,7 +63,7 @@ object Market {
    * @param bidfun A function that a worker uses to determine a bid price
    * @return A list of bids (one per worker)
    */
-  def workerBids( ws: List[Worker], js: List[Job], current: List[Bid], bidfun: (Worker, Job) => Option[Bid] ) = {
+  def workerBids( ws: List[Worker], js: Iterable[Job], current: List[Bid], bidfun: (Worker, Job) => Option[Bid] ) = {
 	  // For each worker, determine all possible next bids
 	  // Next bid is halfway between job value and latest rate *or* 5% less than last bid
 	  // Choose Bid with highest credit rate for each worker
@@ -199,11 +199,11 @@ class Market( disciplines: Int ) {
    * @param minWork Minimum workload each worker must try to commit to 
    * @return Map matching Jobs to Workers, and updated list of workers
    */
-  def marketBidding( inws: List[Worker], js: List[Job], minWork: Double, mType: MarketType ) = {
+  def marketBidding( inws: List[Worker], js: Iterable[Job], minWork: Double, mType: MarketType ) = {
 
 	  def marketBidding( ws: List[Worker], 
 	                     bidders: List[Worker], 
-	                     js: List[Job], 
+	                     js: Iterable[Job], 
 	                     offers: List[Bid] ): (List[Bid], List[Worker]) = {
 
 	      // Get bids of given workers for given jobs
@@ -220,8 +220,14 @@ class Market( disciplines: Int ) {
 		  // Update crediting rate of workers according to whether their bid was rejected or not
 		  // Committed is only updated once bids are finalised (at the end of this job cycle)
 		  // If a worker is not found in cmap, then all of their bids have been rejected -- revert to original rate
-		  val updatedWorkers = ws map { w => Worker(w.name, w.efficiency, cmap.getOrElse(w, inws.find(_ equals w).getOrElse(w).rate), w.committed,
-		    										(bids collect { case b: Bid if b.worker equals w => b }):::w.bids ) }
+		  // val updatedWorkers = ws map { w => Worker(w.name, w.efficiency, cmap.getOrElse(w, inws.find(_ equals w).getOrElse(w).rate), w.committed,
+		  val updatedWorkers = ws map { w => Worker(w.name, w.efficiency, 
+				  									cmap.get(w) match {
+				  									  case Some((rate, weight)) => rate
+				  									  case None => inws.find(_ equals w).getOrElse(w).rate 
+		  											},
+		  							                w.committed,
+		  							                (bids collect { case b: Bid if b.worker equals w => b }):::w.bids ) }
 		  
 		  // Partition into those workers that need to rebid, and those that can sit
 		  val (sitters, rebidders) = updatedWorkers partition { w => tmap.getOrElse(w, 0.0) + w.committed > minWork}
