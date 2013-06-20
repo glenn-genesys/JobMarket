@@ -32,7 +32,7 @@ object Market {
    * Return the result in a Map
    */
   def creditRate( m:List[Bid] ) = 
-	m groupBy { _.worker } map { case (ww, bids) => (ww, wmeanstd( bids map { b => (b.creditRate, b.timeload) } )) }
+    m groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.creditRate, b.timeload) } )) }
   /* def creditRate( m:Map[Job, (Worker, Double)] ) = 
     m groupBy { _._2._1 } map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, p)) => (p/j.workerTime(w), j.workerTime(w)) } )) }
     */
@@ -223,7 +223,8 @@ class Market( disciplines: Int ) {
 		  // val updatedWorkers = ws map { w => Worker(w.name, w.efficiency, cmap.getOrElse(w, inws.find(_ equals w).getOrElse(w).rate), w.committed,
 		  val updatedWorkers = ws map { w => Worker(w.name, w.efficiency, 
 				  									cmap.get(w) match {
-				  									  case Some((rate, weight)) => rate
+				  									  // case Some((rate, weight)) => rate
+				  									  case Some(rate) => rate
 				  									  case None => inws.find(_ equals w).getOrElse(w).rate 
 		  											},
 		  							                w.committed,
