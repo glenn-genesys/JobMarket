@@ -237,7 +237,7 @@ class Market( disciplines: Int ) {
 		  // val updatedCurrent = current map { case (j, (w, b)) => (j, (updatedWorkers.find(_ equals w).getOrElse(w), b)) }
 		  val updatedCurrent = current map { case Bid(w, j, p) => Bid(updatedWorkers.find(_ equals w).getOrElse(w), j, p) }
 		  
-		  // Bidding stop when all workers have reached minimum work commitment, or all jobs committed
+		  // Bidding stops when all workers have reached minimum work commitment, or all jobs committed
 		  rebidders match {
 		    case Nil => (updatedCurrent, updatedWorkers)
 		    case _ if (current.size equals js.size) && (current equals offers) => (updatedCurrent, updatedWorkers)
