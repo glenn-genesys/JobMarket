@@ -4,6 +4,8 @@ trait MarketType {
   def bidfun: (Worker, Job) => Option[Bid]
   
   def selectfun: Bid => Double = _.productionRate
+  
+  override def toString = getClass().getName()
 }
 
 object CreditMarket extends MarketType {

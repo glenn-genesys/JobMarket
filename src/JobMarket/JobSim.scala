@@ -22,15 +22,20 @@ object JobSim extends App {
   }                                               
   
   /** Calculate weighted mean value of a list of tuples (value, weight) */
-  def wmean(xs:Iterable[(Double,Double)]): Double = (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), (v, w)) => (vs + v*w, ws + w) } ) match {case (vs,ws) => vs/ws}
-  def wmeano(xs:Iterable[(Double,Option[Double])]): Double = 
-    (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), (v, w)) => (vs + v*w.getOrElse(0.0), ws + w.getOrElse(0.0)) } ) match {case (vs,ws) => vs/ws}
+  // def wmean(xs:Iterable[(Double,Double)]): Double = (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), (v, w)) => (vs + v*w, ws + w) } ) match {case (vs,ws) => vs/ws}
+  
+  def wmean(xs:Iterable[Estimate]): Double = (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), est) => (vs + est.v*est.w, ws + est.w) } ) match {case (vs,ws) => vs/ws}
+  // def wmeano(xs:Iterable[(Double,Option[Double])]): Double = 
+  //   (xs.foldLeft((0.0, 0.0)) { case ((vs, ws), (v, w)) => (vs + v*w.getOrElse(0.0), ws + w.getOrElse(0.0)) } ) match {case (vs,ws) => vs/ws}
 
   /** Calculate the weighted mean and estimate the population standard deviation from a list of tuples (value, weight)
    *  Note that weights can be estimated from std using: w = 1/std^2
    */
-  def wmeanstd( wvs: Iterable[(Double, Double)] ) = (wmean(wvs), std(wvs map {_._1}))
-  def wmeanstdo( wvs: Iterable[(Double, Option[Double])] ) = (wmeano(wvs), std(wvs map {_._1}))
+  // def wmeanstd( wvs: Iterable[(Double, Double)] ) = (wmean(wvs), std(wvs map {_._1}))
+  
+  def wmeanstd( wvs: Iterable[Estimate] ) = Estimate(wmean(wvs), std(wvs map {_.v}))
+  
+  // def wmeanstdo( wvs: Iterable[(Double, Option[Double])] ) = (wmeano(wvs), std(wvs map {_._1}))
   
   /* 
   •	Define k disciplines
@@ -93,9 +98,9 @@ object JobSim extends App {
 	  println("Amount of allocated work: " + (matching.keySet map {_.workload} sum) )
 	  println("Amount of allocated time: " + (matching map { case (j, w) => j.workerTime(w) } sum) )
 
-	  println("Worker average value: " + (matching groupBy { _._2 } map { case (ww, jws) => (ww, wmean( jws map { case (j, w) => (j.workload/j.workerTime(w), j.workerTime(w)) } )) } ))
+	  println("Worker average value: " + (matching groupBy { _._2 } map { case (ww, jws) => (ww, wmean( jws map { case (j, w) => Estimate.byWeight(j.workload/j.workerTime(w), j.workerTime(w)) } )) } ))
 	  println("Job value: " + (matching map { case (j, w) => j.workload/j.workerTime(w) }))
-	  println("Average value: " + wmean( matching map { case (j, w) => (j.workload/j.workerTime(w), j.workerTime(w)) } ))
+	  println("Average value: " + wmean( matching map { case (j, w) => Estimate.byWeight(j.workload/j.workerTime(w), j.workerTime(w)) } ))
   }
 
   def printBidStats( matching: List[Bid] ) {
@@ -110,9 +115,9 @@ object JobSim extends App {
 	  println("Amount of allocated work: " + totalWork + " = " + totalWork/numWorkers + " per worker")
 	  println("Amount of allocated time: " + timeWorked + " = " + timeWorked/numWorkers + " per worker" )
 
-	  println("Worker average value: " + (matching groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.workload/b.timeload, b.timeload) } )) } ))
+	  println("Worker average value: " + (matching groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => Estimate.byWeight(b.workload/b.timeload, b.timeload) } )) } ))
 	  println("Job value: " + (matching map { b => b.workload/b.timeload }))
-	  println("Average value: " + wmean( matching map { b => (b.workload/b.timeload, b.timeload) } ))
+	  println("Average value: " + wmean( matching map { b => Estimate.byWeight(b.workload/b.timeload, b.timeload) } ))
 
 	  println("Credit rates: " + Market.creditRate(matching))
 	  println("Production rate: " + Market.productionRate(matching))
@@ -185,10 +190,13 @@ object JobSim extends App {
 
   println("Full market matching:")
   val mTypes = List(CreditMarket, PreferenceMarket, RandomMarket)
-  val fullSim = comparativeMarketSim( 50, 0.2, 10, 3.0, 4.0, List(CreditMarket), 100 )
+  val fullSim = comparativeMarketSim( 50, 0.2, 10, 3.0, 4.0, mTypes, 1 )
 
   // Display comparative results from one run
   val fullResults = (fullSim.head zip mTypes) map {case (res, m) => collectResults(res, m)}
+
+  // val comp = compareStats(fullSim.head.head, fullSim.head(1))
+
   
   for (res <- fullResults; (label, value) <- res) println(label + ": " + value)
   
@@ -207,32 +215,35 @@ object JobSim extends App {
   // Introduce classes for (v, std) and (v, weight)
   /** Calculate statistics on a set of results from multiple values */
   def getStats(vs: Iterable[Any]) = vs.head match {
-    // Can't match on Iterable[Type] because Type is erased, so test head element then extract all matching elements into a new lterable
+    // Can't match on Iterable[Type] because Type is erased, so test head element then extract all matching elements into a new Iterable
     case _ if vs.size equals 1 => vs.head
     case _: Int => {
       val ds: Iterable[Int] = for (v <- vs) yield v match { case d: Int => d }  
-      (mean(ds), std(ds))
+      Estimate(mean(ds), std(ds))
     }
     case _: Double => {
       val ds: Iterable[Double] = for (v <- vs) yield v match { case d: Double => d }  
-      (mean(ds), std(ds))
+      Estimate(mean(ds), std(ds))
     }
-    case (_: Double, _: Double) => {
-      val ds: Iterable[(Double, Double)] = for (v <- vs) yield v match { case d2: (Double, Double) => d2 }
-      val sdev = ds.unzip._2
-      (wmeanstd(ds map vstd2vwt), (mean(sdev), std(sdev)))
+    case _: Estimate => {
+      val ds: Iterable[Estimate] = for (v <- vs) yield v match { case d: Estimate => d }
+      val sdev = ds map (_.s)
+      (wmeanstd(ds), Estimate(mean(sdev), std(sdev)))
     }
-    case ((_: Double, _: Double), (_: Double, _: Double)) => {
-      val ds: Iterable[((Double, Double), (Double, Double))] = 
-        for (v <- vs) yield v match { case d4: ((Double, Double), (Double, Double)) => d4 }
+    case (_: Estimate, _: Estimate) => {
+      val ds: Iterable[(Estimate, Estimate)] = 
+        for (v <- vs) yield v match { case e2: (Estimate, Estimate) => e2 }
       val (vstd, stdstd) = ds.unzip
-      (wmeanstd(vstd map vstd2vwt), wmeanstd(stdstd map vstd2vwt))
+      (wmeanstd(vstd), wmeanstd(stdstd))
     }
     case o => o
   }
   
-  def compare[T](v1: T, v2: T) = (v1, v2) match {
+  def compare[T](v1: T, v2: T): Any = (v1, v2) match {
+    case (i1: Int, i2: Int) => i2.toDouble/i1
     case (d1: Double, d2: Double) => d2/d1
+    case (e1: Estimate, e2: Estimate) => Estimate( e2.v/e1.v, math.sqrt(math.pow(e2.s/e1.v, 2) + math.pow(e1.s * e2.v/math.pow(e1.v, 2), 2) ) )
+    case ((e1: Estimate, e2: Estimate), (f1: Estimate, f2: Estimate)) => (compare(e1, f1), compare(e2, f2))
   }
   
   /** Compare values from two separate runs */

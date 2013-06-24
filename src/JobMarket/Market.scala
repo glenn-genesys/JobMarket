@@ -32,7 +32,7 @@ object Market {
    * Return the result in a Map
    */
   def creditRate( m:List[Bid] ) = 
-    m groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => (b.creditRate, b.timeload) } )) }
+    m groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => Estimate.byWeight(b.creditRate, b.timeload) } )) }
   /* def creditRate( m:Map[Job, (Worker, Double)] ) = 
     m groupBy { _._2._1 } map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, p)) => (p/j.workerTime(w), j.workerTime(w)) } )) }
     */
@@ -41,7 +41,7 @@ object Market {
    * Calculate the average production rate over all jobs (ie. work/credit) implied by the given matching
    */
   def productionRate( m:List[Bid] ) = 
-  wmeanstd( m map { case b: Bid => (b.productionRate, b.workload) } )
+  wmeanstd( m map { case b: Bid => Estimate.byWeight(b.productionRate, b.workload) } )
   /* def productionRate( m:Map[Job, (Worker, Double)] ) = 
   { wvs: Map[Double, Double] => (wmean(wvs), std(wvs map {_._1})) }.apply( m map { case (j, (w, p)) => (j.workload/p, j.workload) } ) */
    //  wmean(m map { case (j, (w, p)) => (j.workload/p, j.workload) })
@@ -50,7 +50,7 @@ object Market {
    * Calculate the average payoff-ratio over all jobs (ie. productionRate/creditRate) implied by the given matching
    */
   def payoffRatio( m:List[Bid] ) = 
-  wmeanstd( m map { case b: Bid => (b.payoffRatio, b.workload) } )
+  wmeanstd( m map { case b: Bid => Estimate.byWeight(b.payoffRatio, b.workload) } )
   // { wvs: Map[Double, Double] => (wmean(wvs), std(wvs map {_._1})) }.apply( m map { case (j, (w, p)) => (j.workload*j.workerTime(w)/math.pow(p, 2), j.workload) } )
 
 
