@@ -15,7 +15,7 @@ case class Job( id: Int, parent: Option[Job], skills: List[Double] ) {
    * Assumed to be the sum of the time for each skill area
    */
   def workerTime( w: Worker ) = {
-	  skills.zip(w.efficiency).map( x => x._1 / x._2) sum // reduceLeft {_+_}
+	  skills.zip(w.efficiency).map( x => x._1 / x._2) sum
   }
 	  
   /**

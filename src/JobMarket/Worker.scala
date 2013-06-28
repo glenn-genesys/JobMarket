@@ -14,8 +14,11 @@ case class Worker(name: String, efficiency: List[Double], rate: Double = 1.0, co
    * Return the list of jobs, in preferred order (most preferred first)
    * Workers prefer the jobs that they can do most efficiently
    */
-  def jobPrefs( js: List[Job] ) = js.sortBy( j => j.workerTime(this)/j.skills.sum )
+  def jobPrefs( js: List[Job] ) = js.sortBy( jobPref(_) )
 
+  // Lowest is best
+  def jobPref( j: Job ) = j.workerTime(this)/j.workload
+  
   override def toString = name //  + ": " + efficiency.toString
   
   override def equals(o: Any) = o match {

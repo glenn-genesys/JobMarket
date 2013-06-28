@@ -124,6 +124,31 @@ object JobSim extends App {
   }
 
   /**
+   * A matching is stable if there is no pair (Job, Worker) that would both be better off matched with each other rather than their current matching
+   * That is, a Job (or Worker) may prefer other workers (or jobs) to their current match, but those others must not likewise prefer the original job (or worker)
+   */
+  def isStable(ws: List[Worker], bs: Iterable[Bid]) = {
+    // What is the preferred order of workers, for each job
+    // val t0 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws)}
+    // Which workers are preferred more than the worker selected for each job
+    // val preferredWorkers = bs map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) )}
+    // For each of these workers, find their preference for the same job and their preference for the worst job they are currently assigned
+    // val t000 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => (w1.jobPref(j), worstJob.get(w1), worstJob.get(w1).map(w1.jobPref(_))) ) } 
+    // For each of these workers, do they consider this job worse than any other jobs they are assigned
+    // val t1 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
+    // val t2 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
+    // val t3 = bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) >= w1.jobPref(_)) ) }
+
+    // Map of workers to their worst current assignment
+    val worstJob = bs groupBy (_.worker) map {case (w, js) => (w, js.minBy( _.value ).job)}
+    
+    /** Would this worker prefer this job to any of their existing jobs? */
+    def isBetterJob( w: Worker, j: Job ) = worstJob.get(w).forall(w.jobPref(j) < w.jobPref(_))
+    
+    bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( !isBetterJob(_, j) ) }
+  }
+  
+  /**
    * Run a market-based simulation
    * @param numWorkers The number of workers
    * @param jobSize Average job size (FTE)
@@ -132,7 +157,7 @@ object JobSim extends App {
    * @param batchFreq The number of times per year that new jobs are released and bid upon
    * @param mTypes A list of market types to compare on the same sequence of jobs
    * @param numRuns The number of times to run the sim for each case
-   * @return IndexedSeq<numRuns>(Iterable<mTypes>(List<years*batchFreq>(Tuple(List(Workers), List(Successful bids)))))
+   * @return IndexedSeq<numRuns>(Iterable<mTypes>(Map[String,Any]))
    */
   def comparativeMarketSim( numWorkers: Int, jobSize: Double, numDisciplines: Int, simYears: Double, batchFreq: Double, mTypes: Iterable[MarketType] = List(CreditMarket), numRuns: Int = 1 ) = {
     // Overall market process:
@@ -143,7 +168,7 @@ object JobSim extends App {
     // Determine worker commitment (and rates) from most recent set of allocations
     // Continue market bidding until max work reached
 	val margin = 1.5
-    val workStep = 1.0/batchFreq
+    val workStep = 1.0/batchFreq 
     val batchWork = numWorkers/batchFreq*margin
     val numJobs = batchWork/jobSize toInt
     val market = new Market(numDisciplines)
@@ -182,59 +207,32 @@ object JobSim extends App {
 	  val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
 	  val (newJobs, nextJobs) = allJobs.splitAt(numJobs)
 	  
-	  mTypes map (marketSim( workers, newJobs, nextJobs, workStep, _, Nil ).reverse)
+	  mTypes map { m => collectResults(marketSim( workers, newJobs, nextJobs, workStep, m, Nil ).reverse, m) }
 	}
   }
   
-  // val fullSim = comparativeMarketSim( 5, 0.2, 5, 1.0, 4.0, List(CreditMarket), 1 )
-
-  println("Full market matching:")
-  val mTypes = List(CreditMarket, PreferenceMarket, RandomMarket)
-  val fullSim = comparativeMarketSim( 50, 0.2, 10, 3.0, 4.0, mTypes, 1 )
-
-  // Display comparative results from one run
-  val fullResults = (fullSim.head zip mTypes) map {case (res, m) => collectResults(res, m)}
-
-  // val comp = compareStats(fullSim.head.head, fullSim.head(1))
-
-  
-  for (res <- fullResults; (label, value) <- res) println(label + ": " + value)
-  
-  // Collect results of all runs for one market type and calculate stats
-  val resultSeq = fullSim.transpose.head map (collectResults(_, mTypes(0)))
-  
-  println
-  println("Run stats for CreditMarket")
-  for ((label, value) <- resultStats( resultSeq )) println(label + ": " + value)
-  
-  // Think about: how to do comparative stats. Can compare different market types with same workers and jobs
-  // And can compare over multiple runs.
-  // For a particular market type want statistics of each measure: mean + std
-  // Can also calculate statistics of comparative measures. eg. mean + std of: overall value A/overall value B
-
-  // Introduce classes for (v, std) and (v, weight)
   /** Calculate statistics on a set of results from multiple values */
   def getStats(vs: Iterable[Any]) = vs.head match {
     // Can't match on Iterable[Type] because Type is erased, so test head element then extract all matching elements into a new Iterable
     case _ if vs.size equals 1 => vs.head
     case _: Int => {
       val ds: Iterable[Int] = for (v <- vs) yield v match { case d: Int => d }  
-      Estimate(mean(ds), std(ds))
+      Estimate(ds)
     }
     case _: Double => {
       val ds: Iterable[Double] = for (v <- vs) yield v match { case d: Double => d }  
-      Estimate(mean(ds), std(ds))
+      Estimate(ds)
     }
     case _: Estimate => {
       val ds: Iterable[Estimate] = for (v <- vs) yield v match { case d: Estimate => d }
-      val sdev = ds map (_.s)
-      (wmeanstd(ds), Estimate(mean(sdev), std(sdev)))
+      val sdev = ds map (_.u)
+      (Estimate(ds), Estimate(sdev))
     }
     case (_: Estimate, _: Estimate) => {
       val ds: Iterable[(Estimate, Estimate)] = 
         for (v <- vs) yield v match { case e2: (Estimate, Estimate) => e2 }
       val (vstd, stdstd) = ds.unzip
-      (wmeanstd(vstd), wmeanstd(stdstd))
+      (Estimate(vstd), Estimate(stdstd))
     }
     case o => o
   }
@@ -242,22 +240,25 @@ object JobSim extends App {
   def compare[T](v1: T, v2: T): Any = (v1, v2) match {
     case (i1: Int, i2: Int) => i2.toDouble/i1
     case (d1: Double, d2: Double) => d2/d1
-    case (e1: Estimate, e2: Estimate) => Estimate( e2.v/e1.v, math.sqrt(math.pow(e2.s/e1.v, 2) + math.pow(e1.s * e2.v/math.pow(e1.v, 2), 2) ) )
+    case (e1: Estimate, e2: Estimate) => Estimate( e2.v/e1.v, math.sqrt(math.pow(e2.u/e1.v, 2) + math.pow(e1.u * e2.v/math.pow(e1.v, 2), 2) ) )
     case ((e1: Estimate, e2: Estimate), (f1: Estimate, f2: Estimate)) => (compare(e1, f1), compare(e2, f2))
+    case o => o
   }
   
   /** Compare values from two separate runs */
-  def compareStats(m1: Map[String, Any], m2: Map[String, Any]): Map[String, Any] = {
-	for ((k, v) <- m1) yield k->compare(v, m2(k))
+  /* def compareStats[P <% Iterable[(String,Any)], Q <% Map[String,Any]](m1: P, m2: Q): Map[String, Any] = {
+    ( for (((k, v)) <- m1) yield k->compare(v, m2(k)) ) toMap
+  } */
+  def compareStats(m1: Iterable[(String,Any)], m2: Map[String,Any]): Map[String, Any] = {
+    ( for (((k, v)) <- m1) yield k->compare(v, m2(k)) ) toMap
   }
   
-  /* def resultStats(history: Map[String, Any]): Map[String, Any] = {
-    (history groupBy {case (s, _) => s}) map {case (s, vs) => (s, getStats(vs))}
-  } */
-  def resultStats[T <% IndexedSeq[LinkedHashMap[String, Any]]](history: T): Map[String, Any] = {
+  def resultStats(history: Iterable[Map[String, Any]]): Map[String, Any] = {
     (history.flatten groupBy {case (s: String, _) => s}) map {case (s, vs) => (s, getStats(vs.unzip._2))}
-  } 
-  
+  }
+  /* def resultStats[T[U] <: Iterable[U], U <: Map[String, Any]](history: T[U]): Map[String, Any] = {
+    (history.flatten groupBy {case (s: String, _) => s}) map {case (s, vs) => (s, getStats(vs.unzip._2))}
+  } */
   
   /* val (workerHistory, fullMarketMatch) = fullSim.head.unzip
   println
@@ -270,10 +271,18 @@ object JobSim extends App {
 
   def stdError( ve: (Double, Double) ) = ve._1.toString + " +/- " + ve._2
 
+  /**
+   * Takes the simulation output from a single run, for a single market type, calculates various metrics and returns them in a map 
+   * @param simOutput The output from a single run (multiple rounds of job releases) of a market simulation
+   * @param mType The market type
+   * @return Map of String to results (Any)
+   */
   def collectResults( simOutput: List[(List[Worker], List[Bid])], mType: MarketType ) = {
     val (workerHistory, fullMarketMatch) = simOutput.unzip
-	val results: LinkedHashMap[String, Any] = LinkedHashMap("Market Type" -> mType)
-  
+	val results: LinkedHashMap[String, Any] = LinkedHashMap("Market Type" -> mType.toString)
+
+	results ++= Map("Stable matchings" -> ((workerHistory, fullMarketMatch).zipped map { case (ws, mm) => isStable(ws, mm)} ) )
+	
     // Determine various stats such as: worker rates over time, value over time, number of bids per job allocated
     val creditMap = fullMarketMatch map { Market.creditRate(_) }
   
@@ -315,32 +324,52 @@ object JobSim extends App {
     val avEff = getStats(effRates)
 
     results ++= Map("Efficiency rates" -> effRates, "Av efficiency" -> avEff) 
+    
+    // Calculate mean supply and demand of each discipline
+    /* val demand = fullMarketMatch.map(_.map(_.job.skills).transpose map { Estimate(_) }) map { Estimate(_) }
+    val supply = workerHistory.last.map(_.efficiency).transpose map { Estimate(_) } */
+    // Estimate supply and demand curves
+    val demand = fullMarketMatch.flatten.map(_.job.skills).transpose map { Histogram(_) }
+    // val demand = fullMarketMatch.flatten.map(b => b.job.skills map (s => (s, b.job.workload))).transpose map { Histogram(_) }
+    val supply = workerHistory.last.map(_.efficiency).transpose map { Histogram(_) }
+    
+    results ++= Map("Supply per skill" -> supply, "Demand per skill" -> demand)
+    
+    // Want to calculate 'market-value' of each discipline -- but how?
+    // Rather than mean supply and demand it may be more useful to find the cumulative histograms 
+    // -- this may deliver a supply curve, which can be compared to the demand curve to find the equilibrium?
+
   }
   
-  /* println("Num bids: " + numBids + " Num jobs: " + numJobs)
-  println("Av bids per worker per job: " + avBids)
-  println("Av bids per job: " + numBids.toDouble/numJobs)
 
-  println("Workers: " + workers)
-  println("Amount of allocated work: " + totalWork + " = " + totalWork/workers.size + " per worker")
-  println("Amount of allocated time: " + timeWorked + " = " + timeWorked/workers.size + " per worker" )
-  println("Overall value: " + totalWork/timeWorked)
+  println("Full market matching:")
+  val mTypes = List(CreditMarket, PreferenceMarket, RandomMarket)
+  val fullSim = comparativeMarketSim( numWorkers=50, jobSize=0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mTypes=mTypes, numRuns=2 )
+  // val fullSim = comparativeMarketSim( numWorkers=5, jobSize=0.2, numDisciplines=2, simYears=1.0, batchFreq=4.0, mTypes=List(PreferenceMarket), numRuns=1 )
+
+  // Display comparative results from one run
+
+  val comp = fullSim.transpose map {_.take(2).toList match {case List(r1,r2) => compareStats(r1, r2 toMap); case _ => Map.empty[String, Any]}}
+
+  println()
+  println("Comparative stats for " + mTypes.take(2))
+  for ((label, value) <- resultStats( comp )) println(label + ": " + value)
   
-  // println("Worker average value: " + (matching groupBy {case (_, (w, _)) => w} map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, _)) => (j.workload/j.workerTime(w), j.workerTime(w)) } )) } ))
-  // println("Job value: " + (matching map { case (j, (w, _)) => j.workload/j.workerTime(w) }))
-  // println("Average value: " + wmean( matching map { case (j, (w, _)) => (j.workload/j.workerTime(w), j.workerTime(w)) } ))
+  // Collect results of all runs for each market type and calculate stats
+  
+  for (resultSeq <- fullSim.transpose) {
+  	println
+  	println("Run stats for each market")
+  	for ((label, value) <- resultStats( resultSeq map (_ toMap) )) println(label + ": " + value)
+  }
+  
+  // for (res <- fullSim; (label, value) <- res) println(label + ": " + value)
+  
+  // Think about: how to do comparative stats. Can compare different market types with same workers and jobs
+  // And can compare over multiple runs.
+  // For a particular market type want statistics of each measure: mean + std
+  // Can also calculate statistics of comparative measures. eg. mean + std of: overall value A/overall value B
 
-  println("Time % unemployed: " + (timeCommitted - timeWorked)/timeWorked + " = " + (timeCommitted - timeWorked)/workers.size + " per worker" )
-
-  println("Credit map: " + creditMap)
-  println("Credit rates: " + creditRates + Market.creditRate(fullMarketMatch flatten))
-  println("Average credit rate: " + stdError(avCreditRate) )
-  println("Production rate: " + stdError(Market.productionRate(fullMarketMatch flatten)) )
-  println("Pay-off ratio (Job/Worker): " + stdError(Market.payoffRatio(fullMarketMatch flatten)) )
-
-  println("Efficiency rates: " + (effRates map {stdError(_)}).mkString(", ") )
-  println("Av efficiency: " + stdError(avEff) )
-  */
 
   /* val numDisciplines = 5
   
