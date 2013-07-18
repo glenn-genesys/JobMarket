@@ -21,7 +21,7 @@ object Histogram {
   }
   
   /** Generate a histogram (ie. a frequency count) from a set of values, with the specified minimum number of bins */ 
-  def apply[T](xs: Iterable[T], minBins: Int = 8)( implicit num: Numeric[T] ): Histogram = {
+  /* def apply[T](xs: Iterable[T], minBins: Int = 8)( implicit num: Numeric[T] ): Histogram = {
     val (lb, ub) = (xs.min, xs.max)
     val (lx, ux) = (num.toDouble(lb), num.toDouble(ub))
     val interval = ux-lx
@@ -30,10 +30,9 @@ object Histogram {
     val histMap = xs map { x => (num.toDouble(x)/binSize) toInt } groupBy(identity)
     val histRange: Range = {xs: Set[Int] => xs.min to xs.max} apply histMap.keySet
     Histogram(histRange map { i: Int => (i*binSize, histMap.getOrElse(i, Nil).size + 0.0)})
-  }
+  } */
   /** Generate a histogram from a set of weighted values, ie. summing the weights */
-  // def apply[T](xs: Iterable[T], inws: Iterable[T] = Nil, minBins: Int = 8)( implicit num: Numeric[T]): Histogram = {
-  def apply[T](xs: Iterable[T], inws: Iterable[T], minBins: Int)( implicit num: Numeric[T]): Histogram = {
+  def apply[T](xs: Iterable[T], inws: Iterable[T] = Nil, minBins: Int = 8)( implicit num: Numeric[T]): Histogram = {
     val (lb, ub) = (xs.min, xs.max)
     val (lx, ux) = (num.toDouble(lb), num.toDouble(ub))
     val interval = ux-lx
@@ -46,11 +45,13 @@ object Histogram {
     
     val histMap = xs zip ws map { case (x, w) => ((num.toDouble(x)/binSize) toInt, w) } groupBy { case (x, w) => x }
     val histRange: Range = {xs: Set[Int] => xs.min to xs.max} apply histMap.keySet
-    Histogram(histRange map { i: Int => (i*binSize, num.toDouble( (histMap.getOrElse(i, List((0,0.0))) map { case (i: Int, w: T) => w }).sum )) } )
+    // Histogram(histRange map { i: Int => (i*binSize, num.toDouble( (histMap.getOrElse(i, List((0,0.0))) map { case (i: Int, w: T) => w }).sum )) } )
+    Histogram(histRange.head, binSize, histRange map { i: Int => num.toDouble( (histMap.getOrElse(i, List((0,0.0))) map { case (i: Int, w: T) => w }).sum ) } )
   }
 }
 
-case class Histogram(data: Iterable[(Double, Double)]) {
+// case class Histogram(data: Iterable[(Double, Double)]) {
+case class Histogram(firstBin: Double, binSize: Double, data: Iterable[Double]) {
   
   override def toString = {
     
@@ -61,6 +62,8 @@ case class Histogram(data: Iterable[(Double, Double)]) {
         ("%.2f:").format(v) + (1 to n.toInt).map(_ => "o").mkString
       }
     }
-    data.toList sortBy (_._1) map (formatBar(_)) mkString "\n"
+    val bins = for (i <- 0 until data.size) yield firstBin + i*binSize
+      
+    bins.zip(data).toList sortBy (_._1) map (formatBar(_)) mkString "\n"
   }
 }

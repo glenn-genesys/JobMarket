@@ -50,7 +50,6 @@ object JobSim extends App {
    * Generate an approximately normally distributed random number with given mean and standard deviation
    */
   def normRand( mean: Double, std: Double ) = {
-    // (((1 to 64) map ( _ => math.random ) sum) - 32.0 )/ 4.0 * std  + mean
     Random.nextGaussian * std + mean
   }
   
@@ -126,25 +125,28 @@ object JobSim extends App {
   /**
    * A matching is stable if there is no pair (Job, Worker) that would both be better off matched with each other rather than their current matching
    * That is, a Job (or Worker) may prefer other workers (or jobs) to their current match, but those others must not likewise prefer the original job (or worker)
+   * Make the assumption that if a worker is not allocated any jobs it is because they had no spare capacity, rather than that the algorithm failed
+   * (since we no longer have spare capacity information).
    */
   def isStable(ws: List[Worker], bs: Iterable[Bid]) = {
-    // What is the preferred order of workers, for each job
-    // val t0 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws)}
-    // Which workers are preferred more than the worker selected for each job
-    // val preferredWorkers = bs map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) )}
-    // For each of these workers, find their preference for the same job and their preference for the worst job they are currently assigned
-    // val t000 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => (w1.jobPref(j), worstJob.get(w1), worstJob.get(w1).map(w1.jobPref(_))) ) } 
-    // For each of these workers, do they consider this job worse than any other jobs they are assigned
-    // val t1 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
-    // val t2 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
-    // val t3 = bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) >= w1.jobPref(_)) ) }
-
     // Map of workers to their worst current assignment
     val worstJob = bs groupBy (_.worker) map {case (w, js) => (w, js.minBy( _.value ).job)}
     
     /** Would this worker prefer this job to any of their existing jobs? */
-    def isBetterJob( w: Worker, j: Job ) = worstJob.get(w).forall(w.jobPref(j) < w.jobPref(_))
+    // def isBetterJob( w: Worker, j: Job ) = worstJob.get(w).forall(w.jobPref(j) < w.jobPref(_))
+    def isBetterJob( w: Worker, j: Job ) = worstJob.get(w).exists(w.jobPref(j) < w.jobPref(_))
     
+    // What is the preferred order of workers, for each job
+    val t0 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws)}
+    // Which workers are preferred more than the worker selected for each job
+    val preferredWorkers = bs map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) )}
+    // For each of these workers, find their preference for the same job and their preference for the worst job they are currently assigned
+    val t000 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => (w1.jobPref(j), worstJob.get(w1), worstJob.get(w1).map(w1.jobPref(_))) ) } 
+    // For each of these workers, do they consider this job worse than any other jobs they are assigned
+    val t1 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
+    val t2 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
+    val t3 = bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) >= w1.jobPref(_)) ) }
+
     bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( !isBetterJob(_, j) ) }
   }
   
@@ -329,8 +331,8 @@ object JobSim extends App {
     /* val demand = fullMarketMatch.map(_.map(_.job.skills).transpose map { Estimate(_) }) map { Estimate(_) }
     val supply = workerHistory.last.map(_.efficiency).transpose map { Estimate(_) } */
     // Estimate supply and demand curves
-    val demand = fullMarketMatch.flatten.map(_.job.skills).transpose map { Histogram(_) }
-    // val demand = fullMarketMatch.flatten.map(b => b.job.skills map (s => (s, b.job.workload))).transpose map { Histogram(_) }
+    // val demand = fullMarketMatch.flatten.map(_.job.skills).transpose map { Histogram(_) }
+    val demand = fullMarketMatch.flatten.map(b => b.job.skills map (s => (s, b.job.workload))).transpose map { dd => val (v,w) = dd.unzip; Histogram(v, w) }
     val supply = workerHistory.last.map(_.efficiency).transpose map { Histogram(_) }
     
     results ++= Map("Supply per skill" -> supply, "Demand per skill" -> demand)
@@ -344,7 +346,7 @@ object JobSim extends App {
 
   println("Full market matching:")
   val mTypes = List(CreditMarket, PreferenceMarket, RandomMarket)
-  val fullSim = comparativeMarketSim( numWorkers=50, jobSize=0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mTypes=mTypes, numRuns=2 )
+  val fullSim = comparativeMarketSim( numWorkers=50, jobSize=0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mTypes=mTypes, numRuns=20 )
   // val fullSim = comparativeMarketSim( numWorkers=5, jobSize=0.2, numDisciplines=2, simYears=1.0, batchFreq=4.0, mTypes=List(PreferenceMarket), numRuns=1 )
 
   // Display comparative results from one run

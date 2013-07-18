@@ -23,9 +23,6 @@ object Market {
    */
   def timeCommitment( m:List[Bid] ) = 
 	m groupBy { _.worker } map { case (w, bids) => (w, bids map { _.timeload } sum ) }
-  /* def timeCommitment( m:Map[Job, (Worker, Double)] ) = 
-    m groupBy { _._2._1 } map { case (ww, jws) => (ww, jws map { case (j, (w, _)) => j.workerTime(w) } sum ) }
-    */
 
   /** 
    * Calculate the average crediting rate for each worker implied by the given matching
@@ -33,25 +30,18 @@ object Market {
    */
   def creditRate( m:List[Bid] ) = 
     m groupBy { _.worker } map { case (ww, bids) => (ww, wmean( bids map { b => Estimate.byWeight(b.creditRate, b.timeload) } )) }
-  /* def creditRate( m:Map[Job, (Worker, Double)] ) = 
-    m groupBy { _._2._1 } map { case (ww, jws) => (ww, wmean( jws map { case (j, (w, p)) => (p/j.workerTime(w), j.workerTime(w)) } )) }
-    */
 
  /** 
    * Calculate the average production rate over all jobs (ie. work/credit) implied by the given matching
    */
   def productionRate( m:List[Bid] ) = 
   wmeanstd( m map { case b: Bid => Estimate.byWeight(b.productionRate, b.workload) } )
-  /* def productionRate( m:Map[Job, (Worker, Double)] ) = 
-  { wvs: Map[Double, Double] => (wmean(wvs), std(wvs map {_._1})) }.apply( m map { case (j, (w, p)) => (j.workload/p, j.workload) } ) */
-   //  wmean(m map { case (j, (w, p)) => (j.workload/p, j.workload) })
 
  /** 
    * Calculate the average payoff-ratio over all jobs (ie. productionRate/creditRate) implied by the given matching
    */
   def payoffRatio( m:List[Bid] ) = 
   wmeanstd( m map { case b: Bid => Estimate.byWeight(b.payoffRatio, b.workload) } )
-  // { wvs: Map[Double, Double] => (wmean(wvs), std(wvs map {_._1})) }.apply( m map { case (j, (w, p)) => (j.workload*j.workerTime(w)/math.pow(p, 2), j.workload) } )
 
 
   /**
@@ -91,7 +81,6 @@ object Market {
 		  			  workerPref: Bid => Double, 
 		  			  current: List[Bid] ): List[Bid] = {
 	  // Must force each job to choose their best offer
-	  // (current.toList ::: (workerBids map { b => (b.job, b) })).sortBy { case (_, b) => workerPref(b) } toMap
       (((current ::: workerBids) map { b => (b.job, b) }).sortBy { case (_, b) => workerPref(b) } toMap).values toList
   }
   
