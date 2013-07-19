@@ -173,7 +173,7 @@ object JobSim extends App {
     val workStep = 1.0/batchFreq 
     val batchWork = numWorkers/batchFreq*margin
     val numJobs = batchWork/jobSize toInt
-    val market = new Market(numDisciplines)
+    val market = new Market(mTypes.head, numWorkers, numDisciplines, workStep, margin, jobSize)
 
     def marketSim( ws: List[Worker], js: Iterable[Job], moreJobs: Stream[Job], minWork: Double, mType: MarketType,
                    acc: List[(List[Worker], List[Bid])] ): List[(List[Worker], List[Bid])] = {
@@ -209,7 +209,77 @@ object JobSim extends App {
 	  val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
 	  val (newJobs, nextJobs) = allJobs.splitAt(numJobs)
 	  
-	  mTypes map { m => collectResults(marketSim( workers, newJobs, nextJobs, workStep, m, Nil ).reverse, m) }
+	  mTypes map { m => collectResults(marketSim( workers, newJobs, nextJobs, workStep, m, Nil ).reverse, List(("Market Type", m))) }
+	}
+  }
+  
+  /**
+   * Run sensitivity analysis for a given parameter in a market-based simulation
+   * @param numWorkers The number of workers
+   * @param jobSize Average job size (FTE)
+   * @param numDisciplines The number of distinct work disciplines that work requires (ie. the work diversity)
+   * @param simYears The number of years to simulate
+   * @param batchFreq The number of times per year that new jobs are released and bid upon
+   * @param mTypes A list of market types to compare on the same sequence of jobs
+   * @param numRuns The number of times to run the sim for each case
+   * @return IndexedSeq<numRuns>(Iterable<mTypes>(Map[String,Any]))
+   */
+  def sensitivityMarketSim( numWorkers: Int, jobSize: Double, numDisciplines: Int, simYears: Double, batchFreq: Double, mType: MarketType, numRuns: Int,
+      paramType: String, paramRange: List[Any] ) = {
+    // Overall market process:
+  	// Generate a batch of jobs, slightly exceeding requirement (workMin * workers)
+  	// Allocate these jobs using marketBidding
+  	// Determine unallocated jobs
+  	// Generate additional jobs to slightly exceed requirement again
+    // Determine worker commitment (and rates) from most recent set of allocations
+    // Continue market bidding until max work reached
+    def marketSim( m: Market, ws: List[Worker], js: Iterable[Job], moreJobs: Stream[Job], minWork: Double, mType: MarketType,
+                   acc: List[(List[Worker], List[Bid])] ): List[(List[Worker], List[Bid])] = {
+      /* println("Jobs: " + (js map {_.workload} sum))
+      for (j <- js) println( j.id + ": " + j.skills ) */
+
+      val (matching, workers0) = m.marketBidding(ws, js, minWork, mType)
+	    
+      // Update workers with current commitment, to a minimum of minWork, since that time has passed
+      val tmap = Market.timeCommitment(matching)
+	  val updatedWorkers = workers0 map { w => Worker(w.name, w.efficiency, w.rate, math.max(tmap.getOrElse(w, 0.0) + w.committed, minWork)) }
+
+      val unfilledJobs = js.toSet &~ matching.map(_.job).toSet
+      val newWork = m.numWorkers*m.workStep*m.margin - unfilledJobs.map(_.workload).sum
+      val numJobs = newWork/m.jobSize toInt
+      
+      val (newJobs, nextJobs) = moreJobs.splitAt(numJobs)
+      
+      if (minWork < simYears)
+        marketSim( m, updatedWorkers, unfilledJobs.toList:::newJobs.toList, nextJobs, minWork + m.workStep, mType, (updatedWorkers, matching)::acc )
+      else
+    	(updatedWorkers, matching)::acc
+    }
+    
+	for (i <- 1 to numRuns) yield {
+	    val margin = 1.5
+
+	    paramType match {
+	      case "numWorkers" => {
+	        val pRange = paramRange map { case i:Int => i }
+	        
+	        for (p <- pRange) yield {
+		        val market = new Market(mType, p, numDisciplines, workStep = 1.0/batchFreq, margin, jobSize)
+		        
+			    // val batchWork = numWorkers/batchFreq*margin
+			    val firstJobs = p/batchFreq*margin/jobSize toInt
+		
+			    // Create a new sample of workers and jobs for each run
+			    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
+		
+			    // Create stream of jobs to consume, reused for all market types
+			    val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
+			    val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
+
+			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, mType, Nil ).reverse, List(("Num workers", p)))
+			}
+	      }
+	    }
 	}
   }
   
@@ -239,6 +309,12 @@ object JobSim extends App {
     case o => o
   }
   
+  /** Estimate a trend on a set of results from multiple values */
+  def getTrend(vs: Iterable[Any]) = vs.head match {
+    // Place holder -- need to do some linear algebra
+    case _ => vs
+  }
+  
   def compare[T](v1: T, v2: T): Any = (v1, v2) match {
     case (i1: Int, i2: Int) => i2.toDouble/i1
     case (d1: Double, d2: Double) => d2/d1
@@ -248,9 +324,6 @@ object JobSim extends App {
   }
   
   /** Compare values from two separate runs */
-  /* def compareStats[P <% Iterable[(String,Any)], Q <% Map[String,Any]](m1: P, m2: Q): Map[String, Any] = {
-    ( for (((k, v)) <- m1) yield k->compare(v, m2(k)) ) toMap
-  } */
   def compareStats(m1: Iterable[(String,Any)], m2: Map[String,Any]): Map[String, Any] = {
     ( for (((k, v)) <- m1) yield k->compare(v, m2(k)) ) toMap
   }
@@ -258,9 +331,10 @@ object JobSim extends App {
   def resultStats(history: Iterable[Map[String, Any]]): Map[String, Any] = {
     (history.flatten groupBy {case (s: String, _) => s}) map {case (s, vs) => (s, getStats(vs.unzip._2))}
   }
-  /* def resultStats[T[U] <: Iterable[U], U <: Map[String, Any]](history: T[U]): Map[String, Any] = {
-    (history.flatten groupBy {case (s: String, _) => s}) map {case (s, vs) => (s, getStats(vs.unzip._2))}
-  } */
+  
+  def trendAnalysis(history: Iterable[Map[String, Any]]): Map[String, Any] = {
+    (history.flatten groupBy {case (s: String, _) => s}) map {case (s, vs) => (s, getTrend(vs.unzip._2))}
+  }
   
   /* val (workerHistory, fullMarketMatch) = fullSim.head.unzip
   println
@@ -279,9 +353,9 @@ object JobSim extends App {
    * @param mType The market type
    * @return Map of String to results (Any)
    */
-  def collectResults( simOutput: List[(List[Worker], List[Bid])], mType: MarketType ) = {
+  def collectResults( simOutput: List[(List[Worker], List[Bid])], params: List[(String, Any)] ) = {
     val (workerHistory, fullMarketMatch) = simOutput.unzip
-	val results: LinkedHashMap[String, Any] = LinkedHashMap("Market Type" -> mType.toString)
+	val results: LinkedHashMap[String, Any] = params.foldLeft(LinkedHashMap.empty[String, Any])( _ += _ )
 
 	results ++= Map("Stable matchings" -> ((workerHistory, fullMarketMatch).zipped map { case (ws, mm) => isStable(ws, mm)} ) )
 	
@@ -335,7 +409,7 @@ object JobSim extends App {
     val demand = fullMarketMatch.flatten.map(b => b.job.skills map (s => (s, b.job.workload))).transpose map { dd => val (v,w) = dd.unzip; Histogram(v, w) }
     val supply = workerHistory.last.map(_.efficiency).transpose map { Histogram(_) }
     
-    results ++= Map("Supply per skill" -> supply, "Demand per skill" -> demand)
+    results // ++= Map("Supply per skill" -> supply, "Demand per skill" -> demand)
     
     // Want to calculate 'market-value' of each discipline -- but how?
     // Rather than mean supply and demand it may be more useful to find the cumulative histograms 
@@ -343,8 +417,14 @@ object JobSim extends App {
 
   }
   
+  println("Sensitivity analysis for num workers:")
 
-  println("Full market matching:")
+  val fullSim = sensitivityMarketSim( 5, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket, numRuns=50,
+      paramType = "numWorkers", paramRange = 10 to 100 by 10 toList )
+
+  // for (res <- fullSim.head; (label, value) <- res) println(label + ": " + value)
+
+  /* println("Full market matching:")
   val mTypes = List(CreditMarket, PreferenceMarket, RandomMarket)
   val fullSim = comparativeMarketSim( numWorkers=50, jobSize=0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mTypes=mTypes, numRuns=20 )
   // val fullSim = comparativeMarketSim( numWorkers=5, jobSize=0.2, numDisciplines=2, simYears=1.0, batchFreq=4.0, mTypes=List(PreferenceMarket), numRuns=1 )
@@ -356,16 +436,26 @@ object JobSim extends App {
   println()
   println("Comparative stats for " + mTypes.take(2))
   for ((label, value) <- resultStats( comp )) println(label + ": " + value)
+  */
   
   // Collect results of all runs for each market type and calculate stats
   
-  for (resultSeq <- fullSim.transpose) {
+  val resultList = for (resultSeq <- fullSim.transpose) yield {
   	println
   	println("Run stats for each market")
-  	for ((label, value) <- resultStats( resultSeq map (_ toMap) )) println(label + ": " + value)
-  }
+  	
+  	val runResults = resultStats( resultSeq map (_ toMap) )
+  	
+  	// for ((label, value) <- runResults) println(label + ": " + value)
+  	runResults
+  }  
   
-  // for (res <- fullSim; (label, value) <- res) println(label + ": " + value)
+  val trends = trendAnalysis(resultList)
+  
+  println
+  println("Trend spotting:")
+  for ((label, value) <- trends) println(label + ": " + value)
+
   
   // Think about: how to do comparative stats. Can compare different market types with same workers and jobs
   // And can compare over multiple runs.

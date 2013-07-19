@@ -87,7 +87,7 @@ object Market {
 }
 
 
-class Market( disciplines: Int ) {
+case class Market( mType: MarketType, numWorkers: Int, numDisciplines: Int, workStep: Double, margin: Double, jobSize: Double ) {
   
 	def getMatching( ws: List[Worker], js: List[Job] ) = {
 	  // Get job preferences of all workers. ie. the jobs that workers prefer
