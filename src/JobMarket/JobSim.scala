@@ -233,7 +233,7 @@ object JobSim extends App {
   	// Generate additional jobs to slightly exceed requirement again
     // Determine worker commitment (and rates) from most recent set of allocations
     // Continue market bidding until max work reached
-    def marketSim( m: Market, ws: List[Worker], js: Iterable[Job], moreJobs: Stream[Job], minWork: Double, mType: MarketType,
+    def marketSim( m: Market, ws: List[Worker], js: Iterable[Job], moreJobs: Stream[Job], minWork: Double, simYears: Double, mType: MarketType,
                    acc: List[(List[Worker], List[Bid])] ): List[(List[Worker], List[Bid])] = {
       /* println("Jobs: " + (js map {_.workload} sum))
       for (j <- js) println( j.id + ": " + j.skills ) */
@@ -251,9 +251,26 @@ object JobSim extends App {
       val (newJobs, nextJobs) = moreJobs.splitAt(numJobs)
       
       if (minWork < simYears)
-        marketSim( m, updatedWorkers, unfilledJobs.toList:::newJobs.toList, nextJobs, minWork + m.workStep, mType, (updatedWorkers, matching)::acc )
+        marketSim( m, updatedWorkers, unfilledJobs.toList:::newJobs.toList, nextJobs, minWork + m.workStep, simYears, mType, (updatedWorkers, matching)::acc )
       else
     	(updatedWorkers, matching)::acc
+    }
+    
+    def collectSimResults(numWorkers: Int, jobSize: Double, numDisciplines: Int, simYears: Double, batchFreq: Double, mType: MarketType, margin: Double,
+        paramType: String, p: Any) = {
+    	val market = new Market(mType, numWorkers, numDisciplines, workStep = 1.0/batchFreq, margin, jobSize)
+
+    	// val batchWork = numWorkers/batchFreq*margin
+    	val firstJobs = numWorkers/batchFreq*margin/jobSize toInt
+
+    	// Create a new sample of workers and jobs for each run
+    	val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
+
+    	// Create stream of jobs to consume, reused for all market types
+    	val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
+    	val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
+
+    	collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
     }
     
 	for (i <- 1 to numRuns) yield {
@@ -264,10 +281,68 @@ object JobSim extends App {
 	        val pRange = paramRange map { case i:Int => i }
 	        
 	        for (p <- pRange) yield {
+	          // collectSimResults(p, jobSize, numDisciplines, simYears, batchFreq, mType, margin, paramType, p)
 		        val market = new Market(mType, p, numDisciplines, workStep = 1.0/batchFreq, margin, jobSize)
 		        
 			    // val batchWork = numWorkers/batchFreq*margin
 			    val firstJobs = p/batchFreq*margin/jobSize toInt
+		
+			    // Create a new sample of workers and jobs for each run
+			    val workers = (1 to p) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
+		
+			    // Create stream of jobs to consume, reused for all market types
+			    val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
+			    val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
+
+			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
+			}
+	      }
+	      case "jobSize" => {
+	        val pRange = paramRange map { case i:Double => i }
+	        
+	        for (p <- pRange) yield {
+		        val market = new Market(mType, numWorkers, numDisciplines, workStep = 1.0/batchFreq, margin, p)
+		        
+			    // val batchWork = numWorkers/batchFreq*margin
+			    val firstJobs = numWorkers/batchFreq*margin/p toInt
+		
+			    // Create a new sample of workers and jobs for each run
+			    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
+		
+			    // Create stream of jobs to consume, reused for all market types
+			    val allJobs = jobStream( orphanJob(p, p/2.0, numDisciplines ) )
+			    val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
+
+			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
+			}
+	      }
+	      case "numDisciplines" => {
+	        val pRange = paramRange map { case i:Int => i }
+	        
+	        for (p <- pRange) yield {
+		        val market = new Market(mType, numWorkers, p, workStep = 1.0/batchFreq, margin, jobSize)
+		        
+			    // val batchWork = numWorkers/batchFreq*margin
+			    val firstJobs = numWorkers/batchFreq*margin/jobSize toInt
+		
+			    // Create a new sample of workers and jobs for each run
+			    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to p) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
+		
+			    // Create stream of jobs to consume, reused for all market types
+			    val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, p ) )
+			    val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
+
+			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
+			}
+	      }
+	      case "batchFreq" => {
+	        val pRange = paramRange map { case i:Int => i }
+	        
+	        for (p <- pRange) yield {
+		        val market = new Market(mType, numWorkers, numDisciplines, workStep = 1.0/p, margin, jobSize)
+		        
+			    // val batchWork = numWorkers/batchFreq*margin
+			    val firstJobs = numWorkers/p*margin/jobSize toInt
 		
 			    // Create a new sample of workers and jobs for each run
 			    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
@@ -276,10 +351,48 @@ object JobSim extends App {
 			    val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
 			    val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
 
-			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, mType, Nil ).reverse, List(("Num workers", p)))
+			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
 			}
 	      }
-	    }
+	      case "margin" => {
+	        val pRange = paramRange map { case i:Double => i }
+	        
+	        for (p <- pRange) yield {
+		        val market = new Market(mType, numWorkers, numDisciplines, workStep = 1.0/batchFreq, p, jobSize)
+		        
+			    // val batchWork = numWorkers/batchFreq*margin
+			    val firstJobs = numWorkers/batchFreq*p/jobSize toInt
+		
+			    // Create a new sample of workers and jobs for each run
+			    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
+		
+			    // Create stream of jobs to consume, reused for all market types
+			    val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
+			    val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
+
+			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
+			}
+	      }
+	      /* case "template" => {
+	        val pRange = paramRange map { case i:Int => i }
+	        
+	        for (p <- pRange) yield {
+		        val market = new Market(mType, numWorkers, numDisciplines, workStep = 1.0/batchFreq, margin, jobSize)
+		        
+			    // val batchWork = numWorkers/batchFreq*margin
+			    val firstJobs = numWorkers/batchFreq*margin/jobSize toInt
+		
+			    // Create a new sample of workers and jobs for each run
+			    val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
+		
+			    // Create stream of jobs to consume, reused for all market types
+			    val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
+			    val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
+
+			    collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
+			}
+	      } */
+	  }
 	}
   }
   
@@ -417,11 +530,24 @@ object JobSim extends App {
 
   }
   
-  println("Sensitivity analysis for num workers:")
+  println("Sensitivity analysis:")
 
-  val fullSim = sensitivityMarketSim( 5, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket, numRuns=50,
-      paramType = "numWorkers", paramRange = 10 to 100 by 10 toList )
+  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket, numRuns=20,
+      paramType = "numWorkers", paramRange = 10 to 100 by 10 toList ) */
 
+  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket, numRuns=20,
+      paramType = "jobSize", paramRange = List(0.1, 0.2, 0.3, 0.5, 0.7, 0.9))  // , 1.0, 1.5) )   // Overall value decreases slightly  */
+
+  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket, numRuns=20,
+      paramType = "numDisciplines", paramRange = List(1, 2, 5, 10, 20, 30, 50) )   // Results not highly sensitive to numDisciplines   */
+
+  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket, numRuns=20,
+      paramType = "batchFreq", paramRange = List(1, 2, 4, 12))  // , 26, 52) )  // Unemployed time increases, overall value decreases, efficiency peaks at f=2 */
+  
+  val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket, numRuns=20,
+      paramType = "margin", paramRange = 0.9 to 2.0 by 0.2 toList)   // Very high unemployment % for low values. 1.5 -> < 1%. 
+      // May indicate a problem in the model. Must measure the amount of time it takes jobs to be filled, and/or #jobs that are never filled 
+  
   // for (res <- fullSim.head; (label, value) <- res) println(label + ": " + value)
 
   /* println("Full market matching:")
