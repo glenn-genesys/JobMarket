@@ -46,7 +46,9 @@ object Histogram {
     val histMap = xs zip ws map { case (x, w) => ((num.toDouble(x)/binSize) toInt, w) } groupBy { case (x, w) => x }
     val histRange: Range = {xs: Set[Int] => xs.min to xs.max} apply histMap.keySet
     // Histogram(histRange map { i: Int => (i*binSize, num.toDouble( (histMap.getOrElse(i, List((0,0.0))) map { case (i: Int, w: T) => w }).sum )) } )
-    Histogram(histRange.head, binSize, histRange map { i: Int => num.toDouble( (histMap.getOrElse(i, List((0,0.0))) map { case (i: Int, w: T) => w }).sum ) } )
+    Histogram(histRange.head, binSize, histRange map { 
+      i: Int => num.toDouble( (histMap.getOrElse(i, List((0,0.0))) map { case (i: Int, w: T) => w }).sum )
+      } )
   }
 }
 

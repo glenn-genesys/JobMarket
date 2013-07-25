@@ -7,8 +7,9 @@ package JobMarket
  *
  * @param parent The parent job, if this is a subtask
  * @param skills An ordered list. The amount of work required from each skill/discipline area
+ * @param round The number of bidding batches this job has been on the market and not filled
  */
-case class Job( id: Int, parent: Option[Job], skills: List[Double] ) {
+case class Job( id: Int, parent: Option[Job], skills: List[Double], round: Int = 0 ) {
   
   /**
    * Determine the time given worker would take to perform the job
@@ -33,5 +34,6 @@ case class Job( id: Int, parent: Option[Job], skills: List[Double] ) {
   override def toString = id toString
   
   def workload = skills.sum
-
+  
+  def nextRound = Job(id, parent, skills, round+1)
 }

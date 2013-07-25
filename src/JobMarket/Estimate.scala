@@ -13,7 +13,10 @@ object Estimate {
 }
 
 case class Estimate(v: Double, u: Double) {
-  val w = 1.0/math.pow(u,2)
+  val eps = v*1e-5
+  
+  // Prevent undefined weights -- avoid division by zero uncertainty
+  val w = 1.0/(math.pow(u,2) + eps)
   
   override def toString = {
       u match {

@@ -198,6 +198,9 @@ case class Market( mType: MarketType, numWorkers: Int, numDisciplines: Int, work
 	      // Get bids of given workers for given jobs
 		  val bids = Market.workerBids(bidders, js, offers, mType.bidfun)
 	
+		  // If no-one is bidding, stop the round
+		  if (bids equals Nil) return (offers, ws)
+		  
 	      // Update current best offers -- lowest price = highest production rate
 		  val current = Market.considerOffers( bids, mType.selectfun, offers )  
 		  
