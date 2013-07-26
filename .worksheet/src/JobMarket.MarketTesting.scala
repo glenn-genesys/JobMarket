@@ -34,13 +34,13 @@ object MarketTesting {;import org.scalaide.worksheet.runtime.library.WorksheetSu
  5 to 50 by 5 toList;System.out.println("""res0: List[Int] = """ + $show(res$0));$skip(51); 
   val rs = (1 to 100) map { b => normDist(10, 2) };System.out.println("""rs  : scala.collection.immutable.IndexedSeq[Double] = """ + $show(rs ));$skip(15); val res$1 = 
   
-  rs.sorted;System.out.println("""res1: scala.collection.immutable.IndexedSeq[Double] = """ + $show(res$1));$skip(30); 
+  rs.sorted;System.out.println("""res1: scala.collection.immutable.IndexedSeq[Double] = """ + $show(res$1));$skip(40); 
   
-  val h = Histogram(rs, 5);System.out.println("""h  : <error> = """ + $show(h ));$skip(29); val res$2 = 
-  (h.size, h map (_._2) sum);System.out.println("""res2: <error> = """ + $show(res$2));$skip(41); val res$3 = 
+  val h = Histogram(rs, minBins = 5);System.out.println("""h  : JobMarket.Histogram = """ + $show(h ));$skip(26); val res$2 = 
+  (h.numBins, h.data sum);System.out.println("""res2: (Int, Double) = """ + $show(res$2));$skip(44); val res$3 = 
   
   
-  1 to 100 map (JobSim.f10ceil(_));System.out.println("""res3: scala.collection.immutable.IndexedSeq[Nothing] = """ + $show(res$3));$skip(107); val res$4 = 
+  1 to 100 map (Histogram.f10ceil(_));System.out.println("""res3: scala.collection.immutable.IndexedSeq[Double] = """ + $show(res$3));$skip(107); val res$4 = 
   
   
   (((rs map (_.toInt)) groupBy(identity)).values.map {vs => (vs.head, vs.size)}).toList.sortBy(_._1);System.out.println("""res4: List[(Int, Int)] = """ + $show(res$4));$skip(70); val res$5 = 
@@ -53,11 +53,9 @@ object MarketTesting {;import org.scalaide.worksheet.runtime.library.WorksheetSu
   
  val x = List((1,2), (3,4), (5,6), (7,8));System.out.println("""x  : List[(Int, Int)] = """ + $show(x ));$skip(26); val res$6 = 
  x map {case (_, r) => r};System.out.println("""res6: List[Int] = """ + $show(res$6));$skip(12); val res$7 = 
- x.unzip._2;System.out.println("""res7: List[Int] = """ + $show(res$7));$skip(106); 
+ x.unzip._2;System.out.println("""res7: List[Int] = """ + $show(res$7))}
 
 
-  val results = JobSim.comparativeMarketSim( 3, 0.2, 3, 0.5, 2.0, List(CreditMarket,PreferenceMarket) );System.out.println("""results  : scala.collection.immutable.IndexedSeq[Iterable[scala.collection.mutable.LinkedHashMap[String,Any]]] = """ + $show(results ))}
- 
 
  
   

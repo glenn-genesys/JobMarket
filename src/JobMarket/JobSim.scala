@@ -447,6 +447,16 @@ object JobSim extends App {
     val demand = fullMarketMatch.flatten.map(b => b.job.skills map (s => (s, b.job.workload))).transpose map { dd => val (v,w) = dd.unzip; Histogram(v, w) }
     val supply = workerHistory.last.map(_.efficiency).transpose map { Histogram(_) }
     
+    // Each demand histogram is the total amount of work of jobs that required an amount of work of a particular skill type in the given bin range.
+    // Each supply histogram is a frequency count of the number of workers with a level of skill of a particular type in the given bin range.
+    
+    // The 'supply curve' should be the quantity of work (for a given skill type) that would be supplied as a function of credit rate
+    // Assume credit rate for other skills is (e + 1)/2
+    // Then I will do f units of work at rate p, if p is greater than all my other potential credit rates.
+    
+    // The 'demand curve' should be work of skill x that is required, as a function of credit rate
+    // Jobs are assumed to have inflexible requirements (although this is unrealistic), so demand is constant sum of all jobs requirement for a certain skill.
+    
     results // ++= Map("Supply per skill" -> supply, "Demand per skill" -> demand)
     
     // Want to calculate 'market-value' of each discipline -- but how?
