@@ -53,7 +53,7 @@ object Histogram {
 }
 
 // case class Histogram(data: Iterable[(Double, Double)]) {
-case class Histogram(firstBin: Double, binSize: Double, data: Iterable[Double]) {
+case class Histogram(firstBin: Double, binSize: Double, data: Iterable[Double]) extends Iterable[(Double, Double)] {
   
   override def toString = {
     
@@ -61,7 +61,7 @@ case class Histogram(firstBin: Double, binSize: Double, data: Iterable[Double]) 
       case (v, n) => { 
         // ("%."+places+"f +/- %."+places+"f").format(rint(v*order)/order, rint(u*order)/order)
         // vtmp.substring(0, math.min(4, vtmp.length)) + ":" + (1 to n).map(_ => "o").mkString
-        ("%.2f:").format(v) + (1 to n.toInt).map(_ => "o").mkString
+        ("%.2f,%.2f:").format(v,n) + (1 to n.toInt).map(_ => "o").mkString
       }
     }
     val bins = for (i <- 0 until data.size) yield firstBin + i*binSize
@@ -69,5 +69,19 @@ case class Histogram(firstBin: Double, binSize: Double, data: Iterable[Double]) 
     bins.zip(data).toList sortBy (_._1) map (formatBar(_)) mkString "\n"
   }
   
+  def iterator = new Iterator[(Double, Double)] {
+    var index = 0
+    
+    def hasNext = index < data.size
+    
+    def next = { 
+      index += 1
+      (data.drop(index-1).head, firstBin + binSize*(index-1))
+    }
+  }
+  
   def numBins = data.size
+  
+  /** Return the ith element of the histogram: (y, x) */
+  def apply(i: Int) = iterator.drop(i).next
 }

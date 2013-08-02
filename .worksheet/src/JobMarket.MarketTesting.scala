@@ -53,10 +53,11 @@ object MarketTesting {;import org.scalaide.worksheet.runtime.library.WorksheetSu
   
  val x = List((1,2), (3,4), (5,6), (7,8));System.out.println("""x  : List[(Int, Int)] = """ + $show(x ));$skip(26); val res$6 = 
  x map {case (_, r) => r};System.out.println("""res6: List[Int] = """ + $show(res$6));$skip(12); val res$7 = 
- x.unzip._2;System.out.println("""res7: List[Int] = """ + $show(res$7))}
+ x.unzip._2;System.out.println("""res7: List[Int] = """ + $show(res$7));$skip(23); val res$8 = 
 
 
-
+ 1 to numDisciplines;System.out.println("""res8: scala.collection.immutable.Range.Inclusive = """ + $show(res$8));$skip(12); val res$9 = 
+ workers(0);System.out.println("""res9: JobMarket.Worker = """ + $show(res$9));$skip(57); val res$10 = 
  
-  
+ 0 until numDisciplines map (workers(0).efficiency(_));System.out.println("""res10: scala.collection.immutable.IndexedSeq[Double] = """ + $show(res$10))}
 }

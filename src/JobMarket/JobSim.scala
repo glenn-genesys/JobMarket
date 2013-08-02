@@ -4,6 +4,7 @@ import util.Random
 import scala.collection.immutable.Map
 import scala.collection.mutable.LinkedHashMap
 import scala.collection.GenTraversable
+import math.max
 
 /**
  * @author burgessg
@@ -421,7 +422,7 @@ object JobSim extends App {
     val unfilledJobs = Estimate(passedJobs map (_.size))
     val unfilledWork = Estimate(passedJobs map (_ map (_.workload) sum))
 
-    val jobDelay = ((fullMarketMatch.flatten map {_.job}) ++ passedJobs.head) map (_.round)
+    val jobDelay = (passedJobs.head ++ (fullMarketMatch.flatten map {_.job})) map (_.round)
     // val jobAge = Histogram(jobDelay)
     val jobMaxAge = jobDelay.max
     
@@ -444,20 +445,50 @@ object JobSim extends App {
     val supply = workerHistory.last.map(_.efficiency).transpose map { Estimate(_) } */
     // Estimate supply and demand curves
     // val demand = fullMarketMatch.flatten.map(_.job.skills).transpose map { Histogram(_) }
-    val demand = fullMarketMatch.flatten.map(b => b.job.skills map (s => (s, b.job.workload))).transpose map { dd => val (v,w) = dd.unzip; Histogram(v, w) }
-    val supply = workerHistory.last.map(_.efficiency).transpose map { Histogram(_) }
+    // val demand = fullMarketMatch.flatten.map(b => b.job.skills map (s => (s, b.job.workload))).transpose map { dd => val (v,w) = dd.unzip; Histogram(v, w) }
+    // val supply = workerHistory.last.map(_.efficiency).transpose map { Histogram(_) }
     
     // Each demand histogram is the total amount of work of jobs that required an amount of work of a particular skill type in the given bin range.
     // Each supply histogram is a frequency count of the number of workers with a level of skill of a particular type in the given bin range.
     
-    // The 'supply curve' should be the quantity of work (for a given skill type) that would be supplied as a function of credit rate
+    // The 'supply curve' should be the quantity of work (for a given skill type) that would be supplied per year as a function of credit rate
     // Assume credit rate for other skills is (e + 1)/2
     // Then I will do f units of work at rate p, if p is greater than all my other potential credit rates.
+
+    // The assumed credit rate available for use of a skill that a worker has efficiency, e, in. Probably wrong for e < 1.0
+    def defaultRate = {e: Double => (e + 1.0)/2.0}
     
-    // The 'demand curve' should be work of skill x that is required, as a function of credit rate
+    // The best rate a worker could get for their time, if NOT using the nominated skill. Not really op cost
+    def opportunityCost( skill: Int ): Worker => Double = { w => defaultRate((w.efficiency drop skill) max) }
+    
+    val numDisciplines = workers.head.efficiency.size
+    
+    val supplyCurve = 0 until numDisciplines map { i => 
+      Histogram(0.1, 0.02, 0.1 to 2 by 0.02 map { r => workers map (w => if (r >= opportunityCost(i)(w)) w.efficiency(i) else 0.0 ) sum  } )
+    }
+    
+    // The 'demand curve' should be quantity of work of skill x that is required per year, as a function of credit rate
     // Jobs are assumed to have inflexible requirements (although this is unrealistic), so demand is constant sum of all jobs requirement for a certain skill.
+    val demandCurve = ((passedJobs.head ++ (fullMarketMatch.flatten map {_.job})) map (_.skills) transpose) map (_.sum / 3.0)   // numYears
     
-    results // ++= Map("Supply per skill" -> supply, "Demand per skill" -> demand)
+    /** 
+     * Interpolate. Given the value v, in the interval (h1._1, h2._1), 
+     * return the linearly-interpolated value in the interval (h1._2, h2._2) in the corresponding proportion
+     */
+    import math.{min, max}
+    def interpolate( v: Double, h1: (Double, Double), h2: (Double, Double) ) = (h1, h2) match {
+      case ((x1, y1), (x2, y2)) => min(y2, max(y1, (y2-y1)/(x2-x1) * (v - x1) + y1))
+    }
+    
+    // Find equilibrium
+    // val marketPrice = supplyCurve zip demandCurve map { case (h: Histogram, d: Double) => h.find( {_._1 > d} ) }
+    // val marketPrice = supplyCurve zip demandCurve map { case (h: Histogram, d: Double) => d::
+    //   ( (vs: Seq[(Double, Double)]) => List(interpolate(d, vs(0), vs(1))) ).apply( h.filter( {_._1 > d} ).toSeq) }
+    val marketPrice = supplyCurve zip demandCurve map { case (h: Histogram, d: Double) => h.zipWithIndex.collectFirst( {case ((y, x), i) if y >= d => (d, interpolate( d, h(i-1), h(i))) } ) }
+    
+    results ++= Map("Supply curve per skill" -> supplyCurve, "Demand curve per skill" -> demandCurve)
+    
+    results ++= Map("Market price per skill" -> marketPrice)
     
     // Want to calculate 'market-value' of each discipline -- but how?
     // Rather than mean supply and demand it may be more useful to find the cumulative histograms 
@@ -494,7 +525,7 @@ object JobSim extends App {
       paramType = "bidSplit", paramRange = 0.0 to 1.0 by 0.1 toList)    // Results are suspiciously insensitive to initial bid split, expect for 1.0  */
   
   val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "maxRateDrop", paramRange = List(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1))
+      paramType = "maxRateDrop", paramRange = List(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1)) 
   
   // for (res <- fullSim.head; (label, value) <- res) println(label + ": " + value)
 
