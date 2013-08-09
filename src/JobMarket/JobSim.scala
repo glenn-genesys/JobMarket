@@ -5,6 +5,7 @@ import scala.collection.immutable.Map
 import scala.collection.mutable.LinkedHashMap
 import scala.collection.GenTraversable
 import math.max
+import com.db4o._
 
 /**
  * @author burgessg
@@ -14,6 +15,8 @@ import math.max
  *
  */
 object JobSim extends App {
+  
+  val resultStore: ObjectContainer = Db4oEmbedded.openFile("simResults.db4o")
   
   def funPrint[T]( x: T ) = { println(x); x }   
   def mean[T](xs:Iterable[T])( implicit num: Numeric[T] ) = num.toDouble(xs.sum) / xs.size
@@ -129,7 +132,9 @@ object JobSim extends App {
    * A matching is stable if there is no pair (Job, Worker) that would both be better off matched with each other rather than their current matching
    * That is, a Job (or Worker) may prefer other workers (or jobs) to their current match, but those others must not likewise prefer the original job (or worker)
    * Make the assumption that if a worker is not allocated any jobs it is because they had no spare capacity, rather than that the algorithm failed
-   * (since we no longer have spare capacity information).
+   * (since we have discarded the information about spare capacity).
+   * For this definition of stability we are ignoring the economic payoff. ie. we assume the 'best' job for a worker is the one they can do most efficiently,
+   * regardless of the credit they receive.
    */
   def isStable(ws: List[Worker], bs: Iterable[Bid]) = {
     // Map of workers to their worst current assignment
@@ -140,17 +145,36 @@ object JobSim extends App {
     def isBetterJob( w: Worker, j: Job ) = worstJob.get(w).exists(w.jobPref(j) < w.jobPref(_))
     
     // What is the preferred order of workers, for each job
-    val t0 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws)}
+    // val t0 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws)}
     // Which workers are preferred more than the worker selected for each job
-    val preferredWorkers = bs map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) )}
+    // val preferredWorkers = bs map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) )}
     // For each of these workers, find their preference for the same job and their preference for the worst job they are currently assigned
-    val t000 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => (w1.jobPref(j), worstJob.get(w1), worstJob.get(w1).map(w1.jobPref(_))) ) } 
+    // val t000 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => (w1.jobPref(j), worstJob.get(w1), worstJob.get(w1).map(w1.jobPref(_))) ) } 
     // For each of these workers, do they consider this job worse than any other jobs they are assigned
-    val t1 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
-    val t2 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
-    val t3 = bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) >= w1.jobPref(_)) ) }
+    // val t1 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).map( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
+    // val t2 = bs.map {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) > w1.jobPref(_)) ) } 
+    // val t3 = bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( w1 => worstJob.get(w1).exists(w1.jobPref(j) >= w1.jobPref(_)) ) }
 
     bs.forall {case Bid(w, j, p) => j.workerPrefs(ws).takeWhile( j.workerPref(_) > j.workerPref(w) ).forall( !isBetterJob(_, j) ) }
+  }
+  
+  /**
+   * Determine for a single matching, the preference rank of each worker's assigned job(s), and likewise for jobs.
+   */
+  def satisfaction(ws: List[Worker], bs: Iterable[Bid]) = {
+    
+    // For each worker, find their allocated jobs and all their bids prior to being allocated that job (in reverse order)
+    // Since jobs are bid for in order of preference, the distinct index of the successful job in the list of bids is the worker's preference rank for that job
+    val wSat = bs groupBy (_.worker) map {case (w, wbs) => wbs map (wb => (wb.worker.bids map (_.job)).reverse.distinct.indexOf(wb.job) + 1.0)}
+
+    val v0 = bs groupBy (_.worker)
+    val v1 = v0 map {case (w, wbs) => (w, wbs map (wb => (wb.worker.bids map (_.job))))}
+    val v2 = v0 map {case (w, wbs) => (wbs map (wb => (wb.worker.bids map (_.job)).reverse.distinct))}
+    val x0 = bs map ( b => b.job.workerPrefs(ws) )
+    
+    val jSat = bs map ( b => b.job.workerPrefs(ws).indexOf(b.worker) + 1.0)
+    
+    (wSat, jSat)
   }
   
   /**
@@ -212,7 +236,7 @@ object JobSim extends App {
 	  val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
 	  val (newJobs, nextJobs) = allJobs.splitAt(numJobs)
 	  
-	  mTypes map { m => collectResults(marketSim( workers, newJobs, nextJobs, workStep, m, Nil ).reverse, List(("Market Type", m))) }
+	  mTypes map { m => collectResults(marketSim( workers, newJobs, nextJobs, workStep, m, Nil ).reverse, LinkedHashMap[String, Any]("Market Type" -> m)) }
 	}
   }
   
@@ -236,75 +260,44 @@ object JobSim extends App {
   	// Generate additional jobs to slightly exceed requirement again
     // Determine worker commitment (and rates) from most recent set of allocations
     // Continue market bidding until max work reached
-    def marketSim( m: Market, ws: List[Worker], js: Iterable[Job], moreJobs: Stream[Job], minWork: Double, simYears: Double, mType: MarketType,
-                   acc: List[(List[Worker], List[Job], List[Bid])] ): List[(List[Worker], List[Job], List[Bid])] = {
-      val (matching, workers0) = m.marketBidding(ws, js, minWork, mType)
-	    
-      // Update workers with current commitment, to a minimum of minWork, since that time has passed
-      val tmap = Market.timeCommitment(matching)
-	  val updatedWorkers = workers0 map { w => Worker(w.name, w.efficiency, w.rate, math.max(tmap.getOrElse(w, 0.0) + w.committed, minWork)) }
-
-      val unfilledJobs = (js.toSet &~ matching.map(_.job).toSet) map (_.nextRound) toList
-      val newWork = m.numWorkers*m.workStep*m.margin - unfilledJobs.map(_.workload).sum
-      val numJobs = newWork/m.jobSize toInt
-      
-      val (newJobs, nextJobs) = moreJobs.splitAt(numJobs)
-      
-      if (minWork < simYears)
-        marketSim( m, updatedWorkers, unfilledJobs:::newJobs.toList, nextJobs, minWork + m.workStep, simYears, mType, (updatedWorkers, unfilledJobs, matching)::acc )
-      else
-    	(updatedWorkers, unfilledJobs, matching)::acc
-    }
-    
-    def collectSimResults(numWorkers: Int, jobSize: Double, numDisciplines: Int, simYears: Double, batchFreq: Double, mType: MarketType, margin: Double,
-        paramType: String, p: Any) = {
-    	val market = new Market(mType, numWorkers, numDisciplines, workStep = 1.0/batchFreq, margin, jobSize)
-
-    	// val batchWork = numWorkers/batchFreq*margin
-    	val firstJobs = numWorkers/batchFreq*margin/jobSize toInt
-
-    	// Create a new sample of workers and jobs for each run
-    	val workers = (1 to numWorkers) map (i => Worker(i.toString, (1 to numDisciplines) map ( _ => 1.0/normRand(1.0, 0.2) abs ) toList )) toList
-
-    	// Create stream of jobs to consume, reused for all market types
-    	val allJobs = jobStream( orphanJob(jobSize, jobSize/2.0, numDisciplines ) )
-    	val (newJobs, nextJobs) = allJobs.splitAt(firstJobs)
-
-    	collectResults(marketSim( market, workers, newJobs, nextJobs, market.workStep, simYears, mType, Nil ).reverse, List((paramType, p)))
-    }
-    
 	for (i <- 1 to numRuns) yield {
 	    val margin = 1.2
 
-	    paramType match {
-	      case "numWorkers" => paramRange map { 
-	        case p: Int => collectSimResults(p, jobSize, numDisciplines, simYears, batchFreq, mType, margin, paramType, p)
-	      }
-	      case "jobSize" => paramRange map { 
-	        case p: Double => collectSimResults(numWorkers, p, numDisciplines, simYears, batchFreq, mType, margin, paramType, p)
-	      }
-	      case "numDisciplines" => paramRange map { 
-	        case p: Int => collectSimResults(numWorkers, jobSize, p, simYears, batchFreq, mType, margin, paramType, p)
-	      }
-	      case "simYears" => paramRange map { 
-	        case p: Int => collectSimResults(numWorkers, jobSize, numDisciplines, p, batchFreq, mType, margin, paramType, p)
-	      }
-	      case "batchFreq" => paramRange map { 
-	        case p: Double => collectSimResults(numWorkers, jobSize, numDisciplines, simYears, p, mType, margin, paramType, p)
-	      }
-	      case "margin" => paramRange map { 
-	        case p: Double => collectSimResults(numWorkers, jobSize, numDisciplines, simYears, batchFreq, mType, p, paramType, p)
-	      }
-	      case "rebidRate" => paramRange map { 
-	        case p: Double => collectSimResults(numWorkers, jobSize, numDisciplines, simYears, batchFreq, CreditMarket(rebid = p), margin, paramType, p)
-	      }
-	      case "bidSplit" => paramRange map { 
-	        case p: Double => collectSimResults(numWorkers, jobSize, numDisciplines, simYears, batchFreq, CreditMarket(split = p), margin, paramType, p)
-	      }
-	      case "maxRateDrop" => paramRange map { 
-	        case p: Double => collectSimResults(numWorkers, jobSize, numDisciplines, simYears, batchFreq, CreditMarket(maxRateDrop = p), margin, paramType, p)
-	      }
-	  }
+	    val sims = 
+		    paramType match {
+		      case "numWorkers" => paramRange map { 
+		        case p: Int => new MarketSimulation(p, jobSize, numDisciplines, simYears, batchFreq, mType, margin, paramType, p)
+		      }
+		      case "jobSize" => paramRange map { 
+		        case p: Double => new MarketSimulation(numWorkers, p, numDisciplines, simYears, batchFreq, mType, margin, paramType, p)
+		      }
+		      case "numDisciplines" => paramRange map { 
+		        case p: Int => new MarketSimulation(numWorkers, jobSize, p, simYears, batchFreq, mType, margin, paramType, p)
+		      }
+		      case "simYears" => paramRange map { 
+		        case p: Int => new MarketSimulation(numWorkers, jobSize, numDisciplines, p, batchFreq, mType, margin, paramType, p)
+		      }
+		      case "batchFreq" => paramRange map { 
+		        case p: Int => new MarketSimulation(numWorkers, jobSize, numDisciplines, simYears, p, mType, margin, paramType, p)
+		      }
+		      case "margin" => paramRange map { 
+		        case p: Double => new MarketSimulation(numWorkers, jobSize, numDisciplines, simYears, batchFreq, mType, p, paramType, p)
+		      }
+		      case "rebidRate" => paramRange map { 
+		        case p: Double => new MarketSimulation(numWorkers, jobSize, numDisciplines, simYears, batchFreq, CreditMarket(rebid = p), margin, paramType, p)
+		      }
+		      case "bidSplit" => paramRange map { 
+		        case p: Double => new MarketSimulation(numWorkers, jobSize, numDisciplines, simYears, batchFreq, CreditMarket(split = p), margin, paramType, p)
+		      }
+		      case "maxRateDrop" => paramRange map { 
+		        case p: Double => new MarketSimulation(numWorkers, jobSize, numDisciplines, simYears, batchFreq, CreditMarket(maxRateDrop = p), margin, paramType, p)
+		      }
+		  }
+	    // Store in database and return
+	    for (s <- sims) yield {
+	      resultStore.store(s)
+	      s.results
+	    }
 	}
   }
   
@@ -378,12 +371,28 @@ object JobSim extends App {
    * @param mType The market type
    * @return Map of String to results (Any)
    */
-  def collectResults( simOutput: List[(List[Worker], List[Job], List[Bid])], params: List[(String, Any)] ) = {
+  def collectResults( simOutput: List[(List[Worker], List[Job], List[Bid])], params: LinkedHashMap[String, Any] ) = {
     val (workerHistory, passedJobs, fullMarketMatch) = simOutput.unzip3
-	val results: LinkedHashMap[String, Any] = params.foldLeft(LinkedHashMap.empty[String, Any])( _ += _ )
+	val results = params ++ Map("Worker history" -> workerHistory, "Unsuccessful jobs" -> passedJobs, "Full market match" -> fullMarketMatch)
 
 	val stableMatchings = Estimate((workerHistory, fullMarketMatch).zipped map { case (ws, mm) => if (isStable(ws, mm)) 1 else 0} )
 	results ++= Map("Stable matchings" -> stableMatchings )
+	
+	/** Modify a list of numeric values to subtract the index of each element from the value of each element
+	 * to discount a preference count for the fact that this worker had multiple jobs */
+	def discount[T]( ps: Iterable[T] )( implicit num: Numeric[T] ) =
+	  ps.toList.sorted.zipWithIndex map {case (p: T, i: Int) => num.toDouble(p) - i}
+
+	val sat = (workerHistory zip fullMarketMatch) map {
+	  case (ws, bs) => {
+	    val (wSat, jSat) = satisfaction(ws, bs)
+	    (Estimate(wSat map (discount(_)) flatten), Estimate(jSat))
+	  }
+	} unzip
+
+    val (workerSatisfaction, jobSatisfaction) = (Estimate(sat._1), Estimate(sat._2))
+	
+	results ++= Map("Worker dissatisfaction" -> workerSatisfaction, "Job dissatisfaction" -> jobSatisfaction )
 	
     // Determine various stats such as: worker rates over time, value over time, number of bids per job allocated
     val creditMap = fullMarketMatch map { Market.creditRate(_) }
@@ -422,7 +431,7 @@ object JobSim extends App {
     val unfilledJobs = Estimate(passedJobs map (_.size))
     val unfilledWork = Estimate(passedJobs map (_ map (_.workload) sum))
 
-    val jobDelay = (passedJobs.head ++ (fullMarketMatch.flatten map {_.job})) map (_.round)
+    val jobDelay = (passedJobs.last ++ (fullMarketMatch.flatten map {_.job})) map (_.round)
     // val jobAge = Histogram(jobDelay)
     val jobMaxAge = jobDelay.max
     
@@ -469,7 +478,7 @@ object JobSim extends App {
     
     // The 'demand curve' should be quantity of work of skill x that is required per year, as a function of credit rate
     // Jobs are assumed to have inflexible requirements (although this is unrealistic), so demand is constant sum of all jobs requirement for a certain skill.
-    val demandCurve = ((passedJobs.head ++ (fullMarketMatch.flatten map {_.job})) map (_.skills) transpose) map (_.sum / 3.0)   // numYears
+    val demandCurve = ((passedJobs.last ++ (fullMarketMatch.flatten map {_.job})) map (_.skills) transpose) map (_.sum / 3.0)   // numYears
     
     /** 
      * Interpolate. Given the value v, in the interval (h1._1, h2._1), 
@@ -486,7 +495,7 @@ object JobSim extends App {
     //   ( (vs: Seq[(Double, Double)]) => List(interpolate(d, vs(0), vs(1))) ).apply( h.filter( {_._1 > d} ).toSeq) }
     val marketPrice = supplyCurve zip demandCurve map { case (h: Histogram, d: Double) => h.zipWithIndex.collectFirst( {case ((y, x), i) if y >= d => (d, interpolate( d, h(i-1), h(i))) } ) }
     
-    results ++= Map("Supply curve per skill" -> supplyCurve, "Demand curve per skill" -> demandCurve)
+    // results ++= Map("Supply curve per skill" -> supplyCurve, "Demand curve per skill" -> demandCurve)
     
     results ++= Map("Market price per skill" -> marketPrice)
     
@@ -496,71 +505,77 @@ object JobSim extends App {
 
   }
   
-  println("Sensitivity analysis:")
+  def sensitivityAnalysis = {
+	  println("Sensitivity analysis:")
+	
+	  val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=5, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=1,
+	    paramType = "numWorkers", paramRange = List(5, 10, 20, 30, 50, 70, 100) )  // Behaves well with 20 or more workers. Worker and job dissatisfaction increase consistently 
 
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "numWorkers", paramRange = List(5, 10, 20, 30, 50, 70, 100) )  // Behaves well with 20 or more workers  */
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "numWorkers", paramRange = List(5, 10, 20, 30, 50, 70, 100) )  // Behaves well with 20 or more workers. Worker and job dissatisfaction increase consistently */ 
 
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "jobSize", paramRange = List(0.1, 0.2, 0.3, 0.5, 0.7, 0.9))  // , 1.0, 1.5) )   // Overall value decreases slightly  */
-
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "numDisciplines", paramRange = List(1, 2, 5, 10, 20, 30, 50) )   // Results not highly sensitive to numDisciplines   */
-
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "simYears", paramRange = List(1, 2, 5, 10) )  */
-
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "batchFreq", paramRange = List(1, 2, 4, 12))  // , 26, 52) )  // Unemployed time increases, overall value decreases, efficiency peaks at f=2 */
-  
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "margin", paramRange = 0.9 to 2.0 by 0.2 toList)   // Very high unemployment % for low values. 1.5 -> < 1%. */
-      // All jobs are filled at low margins. Some jobs remain unfilled for multiple rounds at higher values: Max job age(1.3)=2.2 +/- 1, Max job age(1.5)=4.4 +/- 1.5 
-      // Check different bidding strategies. Such unpopular jobs presumably have a low fit to workers' skills  
-
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "rebidRate", paramRange = List(0.99, 0.98, 0.97, 0.95, 0.9, 0.8, 0.7))  // No significant effects. May be different if Workers did not behave the same  */
-  
-  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "bidSplit", paramRange = 0.0 to 1.0 by 0.1 toList)    // Results are suspiciously insensitive to initial bid split, expect for 1.0  */
-  
-  val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
-      paramType = "maxRateDrop", paramRange = List(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1)) 
-  
-  // for (res <- fullSim.head; (label, value) <- res) println(label + ": " + value)
-
-  /* println("Full market matching:")
-  val mTypes = List(CreditMarket, PreferenceMarket, RandomMarket)
-  val fullSim = comparativeMarketSim( numWorkers=50, jobSize=0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mTypes=mTypes, numRuns=20 )
-  // val fullSim = comparativeMarketSim( numWorkers=5, jobSize=0.2, numDisciplines=2, simYears=1.0, batchFreq=4.0, mTypes=List(PreferenceMarket), numRuns=1 )
-
-  // Display comparative results from one run
-
-  val comp = fullSim.transpose map {_.take(2).toList match {case List(r1,r2) => compareStats(r1, r2 toMap); case _ => Map.empty[String, Any]}}
-
-  println()
-  println("Comparative stats for " + mTypes.take(2))
-  for ((label, value) <- resultStats( comp )) println(label + ": " + value)
-  */
-  
-  // Collect results of all runs for each market type and calculate stats
-  
-  val resultList = for (resultSeq <- fullSim.transpose) yield {
-  	println
-  	println("Run stats for each market")
-  	
-  	val runResults = resultStats( resultSeq map (_ toMap) )
-  	
-  	// for ((label, value) <- runResults) println(label + ": " + value)
-  	runResults
-  }  
-  
-  val trends = trendAnalysis(resultList)
-  
-  println
-  println("Trend spotting:")
-  for ((label, value) <- trends) println(label + ": " + value)
-
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "jobSize", paramRange = List(0.1, 0.2, 0.3, 0.5, 0.7, 0.9))  // , 1.0, 1.5) )   // Overall value decreases slightly  
+	      //  scala.MatchError: 1.054 +/- 0.059 (of class JobMarket.Estimate) at JobMarket.JobSim$$anonfun$28.apply(JobSim.scala:292)     */
+	
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "numDisciplines", paramRange = List(1, 2, 5, 10, 20, 30, 50) )   // Worker and job dissatisfaction decrease rapidly to 10 disciplines */
+	
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "simYears", paramRange = List(1, 2, 5, 10) )  */ 
+	
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "batchFreq", paramRange = List(1, 2, 4, 12))  // , 26, 52) )  // Unemployed time increases, overall value decreases, efficiency peaks at f=2
+	      // Worker dissatisfaction decreases significantly -- but there are less jobs on offer each time so not surprising  */
+	  
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "margin", paramRange = 0.9 to 2.0 by 0.2 toList)   // Very high unemployment % for low values. 1.5 -> < 1%.  */ 
+	      // All jobs are filled at low margins. Some jobs remain unfilled for multiple rounds at higher values: Max job age(1.3)=2.2 +/- 1, Max job age(1.5)=4.4 +/- 1.5 
+	      // Check different bidding strategies. Such unpopular jobs presumably have a low fit to workers' skills  
+	
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "rebidRate", paramRange = List(0.99, 0.98, 0.97, 0.95, 0.9, 0.8, 0.7))  // No significant effects. May be different if Workers did not behave the same */ 
+	  
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "bidSplit", paramRange = 0.0 to 1.0 by 0.1 toList)    // Results are suspiciously insensitive to initial bid split, expect for 1.0  */
+	  
+	  /* val fullSim = sensitivityMarketSim( numWorkers=20, jobSize = 0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mType=CreditMarket(), numRuns=20,
+	      paramType = "maxRateDrop", paramRange = List(0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1)) */
+	  
+	  // for (res <- fullSim.head; (label, value) <- res) println(label + ": " + value)
+	
+	  /* println("Full market matching:")
+	  val mTypes = List(CreditMarket, PreferenceMarket, RandomMarket)
+	  val fullSim = comparativeMarketSim( numWorkers=50, jobSize=0.2, numDisciplines=10, simYears=3.0, batchFreq=4.0, mTypes=mTypes, numRuns=20 )
+	  // val fullSim = comparativeMarketSim( numWorkers=5, jobSize=0.2, numDisciplines=2, simYears=1.0, batchFreq=4.0, mTypes=List(PreferenceMarket), numRuns=1 )
+	
+	  // Display comparative results from one run
+	
+	  val comp = fullSim.transpose map {_.take(2).toList match {case List(r1,r2) => compareStats(r1, r2 toMap); case _ => Map.empty[String, Any]}}
+	
+	  println()
+	  println("Comparative stats for " + mTypes.take(2))
+	  for ((label, value) <- resultStats( comp )) println(label + ": " + value)
+	  */
+	  
+	  // Collect results of all runs for each market type and calculate stats
+	  
+	  val resultList = for (resultSeq <- fullSim.transpose) yield {
+	  	println
+	  	println("Run stats for each market")
+	  	
+	  	val runResults = resultStats( resultSeq map (_ toMap) )
+	  	
+	  	// for ((label, value) <- runResults) println(label + ": " + value)
+	  	runResults
+	  }  
+	  
+	  val trends = trendAnalysis(resultList)
+	  
+	  println
+	  println("Trend spotting:")
+	  for ((label, value) <- trends) println(label + ": " + value)
+  }
   
   // Think about: how to do comparative stats. Can compare different market types with same workers and jobs
   // And can compare over multiple runs.
@@ -594,5 +609,11 @@ object JobSim extends App {
   printStats(randomMatch)
   printStats1(marketMatch._1)
   */ 
+  
+  try {
+    sensitivityAnalysis
+  } finally {
+    resultStore.close
+  }
   
 }
